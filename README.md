@@ -1,139 +1,484 @@
 # Predictive Maintenance of Rolling Bearings
 
-**Random Forest vs. LSTM for Remaining Useful Life (RUL) Prediction**
+## Wavelet-Based Remaining Useful Life Prediction Using LSTM and GRU
 
 **Course:** MDM2 – Case Study: Intelligent Systems in Production  
+**University:** Technische Hochschule Deggendorf  
+**Project Track:** Software & Simulation  
 **Team:** 3  
-**Status:** In progress — research pipeline and prototype design
+**Status:** In Progress – Research and Prototype Development
 
-## Project Overview
+---
 
-Unexpected bearing failures can interrupt industrial production and increase maintenance costs. This project investigates prediction of the **remaining useful life (RUL)** of rolling bearings using historical run-to-failure vibration measurements.
+## 1. Project Overview
 
-We plan to compare a **Random Forest regressor** with a **Long Short-Term Memory (LSTM)** sequence model under a consistent evaluation protocol. The main contribution is a reproducible comparison on previously unseen bearings, not a new prediction algorithm or a production-ready monitoring system.
+Unexpected rolling bearing failures can cause production downtime, equipment damage, and increased maintenance costs.
 
-A **Streamlit user-interface prototype** has also been designed to illustrate time-series monitoring and threshold-based maintenance alerts. The displayed defect probability is **not** the same as RUL in minutes, and the prototype must not be interpreted as validated model performance.
+This project investigates the prediction of **Remaining Useful Life (RUL)** of rolling bearings using historical vibration measurements and machine learning.
 
-## Research Question
+The main objective is to compare two recurrent neural network architectures:
 
-> How accurately can Random Forest regression and an LSTM sequence model predict the remaining useful life of rolling bearings from vibration measurements on previously unseen bearings in the XJTU-SY dataset?
+- **Long Short-Term Memory (LSTM)**
+- **Gated Recurrent Unit (GRU)**
 
-## Datasets
+Both models will use equivalent wavelet-based vibration feature sequences to predict RUL directly.
 
-### Primary — XJTU-SY
+The project focuses on a reproducible comparison using previously unseen bearings from the **XJTU-SY dataset**.
 
-- **Dataset:** XJTU-SY Bearing Dataset
-- **Scope:** 15 run-to-failure bearing histories under three operating conditions
-- **Measurements:** Laboratory vibration signals
-- **Source:** [XJTU-SY Bearing Datasets](https://github.com/WangBiaoXJTU/xjtu-sy-bearing-datasets)
+A simple Random Forest regression model may also be implemented as an initial baseline to verify the data-processing and prediction pipeline.
 
-We will verify file order, sampling intervals, and recorded run endpoints before deriving RUL targets. These laboratory results do not establish industrial deployment readiness.
+In addition, a historical maintenance simulation will investigate how predicted RUL could support replacement decisions.
 
-### Optional — PRONOSTIA / PHM 2012
+The project is based on historical laboratory measurements and does not involve real-time industrial deployment.
 
-The PRONOSTIA / PHM 2012 bearing dataset may be used for **additional external validation if time permits**. It is not required for the baseline or core model comparison. Differences in operating conditions, recording conventions, and label availability must be assessed before any cross-dataset claims.
+---
 
-## Planned Methodology
+## 2. Research Question
 
-1. **Data verification and labeling:** Check bearing histories, observation order, time intervals, and run endpoints; derive RUL labels in minutes where supported by timestamps.
-2. **Feature engineering:** Extract RMS, standard deviation, kurtosis, and peak-to-peak amplitude from vibration measurements. Frequency-domain features are optional.
-3. **Leakage-safe splitting:** Keep each complete bearing history within one of train, validation, or test. Fit learned preprocessing on training data only.
-4. **Random Forest baseline:** Train `RandomForestRegressor` on vibration feature vectors using scikit-learn.
-5. **LSTM sequence model:** Train a causal PyTorch LSTM on ordered feature windows using past and current observations only.
-6. **Fair evaluation:** Compare both models using the same RUL definition, held-out test bearings, and metrics; report results by bearing and operating condition.
-7. **Historical replay:** Demonstrate predictions over archived observations without claiming live sensor connectivity.
+> How accurately can standard LSTM and GRU models predict the Remaining Useful Life of rolling bearings using vibration-based wavelet features from the XJTU-SY dataset?
 
-## Evaluation
+### Research Objectives
 
-- **MAE (Mean Absolute Error):** Average absolute difference between predicted and true RUL, in minutes.
-- **RMSE (Root Mean Squared Error):** Square-error-based metric that gives greater weight to large errors, in minutes.
-- **Breakdowns:** Per-bearing and per-operating-condition errors.
+1. Extract meaningful statistical and wavelet-based features from vibration signals.
+2. Develop standard LSTM and GRU regression models for direct RUL prediction.
+3. Compare both models under equivalent experimental conditions.
+4. Evaluate prediction accuracy using MAE and RMSE.
+5. Investigate model generalization on previously unseen bearings.
+6. Explore the potential use of RUL predictions in a hypothetical maintenance decision simulation.
 
-**Lower MAE and RMSE indicate better predictive accuracy.** We do not assume that LSTM will outperform Random Forest. No experimental scores or model winner are claimed until the experiments have been run.
+---
 
-## Implementation Plan and Deliverables
+## 3. Dataset
 
-### Phase 1 — Baseline MVP
+### Primary Dataset: XJTU-SY
 
-- Verified XJTU-SY histories and RUL labels
-- Reproducible feature-extraction workflow
-- Trained Random Forest baseline
-- Saved held-out predictions, MAE/RMSE tables, and plots
-- Simple historical RUL prediction replay
+The project uses the publicly available **XJTU-SY Rolling Bearing Dataset**.
 
-### Phase 2 — Core Research Comparison
+**Dataset source:**  
+https://github.com/WangBiaoXJTU/xjtu-sy-bearing-datasets
 
-- Causal LSTM implementation
-- Matching evaluation protocol for Random Forest and LSTM
-- Per-bearing and per-condition comparative analysis
-- Reproducible experiment documentation and final report
+| Property | Description |
+|---|---|
+| Dataset | XJTU-SY |
+| Equipment | Rolling bearings |
+| Bearing histories | 15 |
+| Operating conditions | 3 |
+| Bearings per condition | 5 |
+| Data type | Vibration measurements |
+| Experiment type | Run-to-failure |
+| Prediction target | Remaining Useful Life (RUL) |
 
-### Optional Extensions
+Each bearing contains a sequence of vibration measurements recorded during its experimental lifetime.
 
-- Further development/integration of the Streamlit dashboard
-- PRONOSTIA / PHM 2012 evaluation
-- Additional frequency-domain features
+The final recorded observation is treated as an experimental end-of-life proxy.
 
-## Streamlit Prototype — UI Design
+### RUL Definition
 
-The current dashboard design illustrates **threshold-based alert behavior** over a sequence of time steps. Two example configurations show the same displayed defect score (**0.98**) with different thresholds:
+For bearing `i`, RUL at observation time `t` is defined as:
 
-| Scenario | Alert threshold | Displayed defect score | Interpretation |
-| --- | ---: | ---: | --- |
-| A | 0.49 | 0.98 | Alert triggered: maintenance needed |
-| B | 0.99 | 0.98 | No alert triggered: score below threshold |
+```text
+RUL_i(t) = T_end,i - t
+```
 
-**Important:** “No alert triggered” does not mean the bearing is healthy. The prototype's **defect probability over time** is distinct from the research target, **remaining useful life in minutes**. The screenshots demonstrate the planned interface behavior, not verified XJTU-SY predictions or measured model accuracy. The UI is not a live factory deployment.
+Where:
 
-## Timeline
+- `RUL_i(t)` = Remaining Useful Life at time `t`
+- `T_end,i` = Final recorded observation time of bearing `i`
+- `t` = Current observation time
 
-| Date | Planned milestone |
-| --- | --- |
-| 20 October 2026 | Proposal, scope, tech stack, and MVP definition |
-| 3 November 2026 | Dataset checks, literature map, features, and Random Forest baseline |
-| 24 November – 8 December 2026 | LSTM development and comparative experiments |
-| 22 December 2026 | Demo, testing, and reproducibility |
-| 12 January 2027 | Final report and presentation |
+RUL will be expressed in minutes after verifying the dataset acquisition intervals.
 
-## Tech Stack
+The observed end time is used to generate retrospective labels and evaluation scores. It is never provided as a model input.
+
+### Optional Dataset
+
+**PRONOSTIA / FEMTO-ST (PHM 2012)** may be considered for additional external validation if time permits.
+
+It is not required for the main experiment.
+
+---
+
+## 4. Proposed Methodology
+
+The project follows a software-based experimental workflow.
+
+```text
+XJTU-SY Vibration Dataset
+          |
+          v
+Data Loading and Verification
+          |
+          v
+Statistical + Wavelet Feature Extraction
+          |
+          v
+RUL Label Generation
+          |
+          v
+Bearing-Disjoint Data Splitting
+          |
+          v
+Sequence Construction
+          |
+          +-------------------+
+          |                   |
+          v                   v
+     LSTM Model           GRU Model
+          |                   |
+          v                   v
+     RUL Prediction      RUL Prediction
+          |                   |
+          +---------+---------+
+                    |
+                    v
+             MAE / RMSE
+                    |
+                    v
+          Model Comparison
+                    |
+                    v
+      Historical Maintenance Replay
+```
+
+### 4.1 Data Preprocessing
+
+The preprocessing stage will include:
+
+- Loading vibration measurements
+- Verifying chronological order
+- Checking missing or invalid records
+- Confirming acquisition intervals
+- Generating RUL labels
+- Preparing numerical model inputs
+
+Any preprocessing parameters learned from data will be fitted using training bearings only.
+
+### 4.2 Feature Extraction
+
+The initial feature representation will combine statistical and wavelet-based descriptors.
+
+**Statistical features may include:**
+
+- Root Mean Square (RMS)
+- Standard deviation
+- Kurtosis
+- Skewness
+- Peak-to-peak amplitude
+
+**Wavelet-based features:**
+
+- Daubechies 4 (db4) wavelet
+- Wavelet-packet decomposition
+- Wavelet RMS or energy descriptors
+- Selected wavelet-coefficient statistics
+
+The final decomposition level and feature dimensions will be determined using training and validation data.
+
+Both LSTM and GRU will receive the same selected features.
+
+### 4.3 Sequence Construction
+
+A sliding-window approach will be used to construct time-series inputs.
+
+Each input window will contain observations at or before the current prediction time.
+
+Future observations will not be included.
+
+Window length and stride will be selected during model development.
+
+---
+
+## 5. Model Development
+
+### 5.1 Random Forest Baseline
+
+A Random Forest regressor is proposed as an initial baseline for testing the end-to-end pipeline.
+
+Its purpose is to verify:
+
+- Feature extraction
+- RUL label generation
+- Model training
+- Prediction generation
+- MAE and RMSE calculation
+
+Random Forest is not one of the two main neural models in the final research comparison.
+
+### 5.2 LSTM Model
+
+LSTM is a recurrent neural network architecture designed to learn temporal dependencies.
+
+The proposed LSTM model will:
+
+1. Receive sequences of vibration features.
+2. Learn temporal patterns associated with bearing degradation.
+3. Predict a continuous RUL value through a regression output layer.
+
+### 5.3 GRU Model
+
+GRU is another gated recurrent architecture with a simpler internal gating structure than LSTM.
+
+The proposed GRU model will:
+
+1. Receive the same feature sequences as LSTM.
+2. Learn temporal degradation patterns.
+3. Predict the same continuous RUL target.
+
+The project uses a standard GRU regression model rather than reproducing the probabilistic GRU-DeepAR architecture described in the reviewed literature.
+
+---
+
+## 6. Test Plan and Evaluation
+
+### 6.1 Dataset Splitting
+
+The dataset will be divided by complete bearing histories.
+
+A proposed initial split is:
+
+| Dataset Partition | Bearings |
+|---|---:|
+| Training | 9 |
+| Validation | 3 |
+| Testing | 3 |
+| **Total** | **15** |
+
+The proposed allocation is three training bearings, one validation bearing, and one test bearing per operating condition.
+
+The exact bearing identifiers will be fixed and documented before model training.
+
+**Important:** No bearing may appear in more than one partition.
+
+### 6.2 Controlled Model Comparison
+
+LSTM and GRU will be compared using:
+
+- Identical training, validation, and test bearings
+- Identical feature definitions
+- Identical sequence lengths
+- Identical RUL targets
+- Identical prediction times
+- Equivalent evaluation procedures
+- Comparable hyperparameter-tuning strategies
+
+### 6.3 Evaluation Metrics
+
+Two regression metrics will be used.
+
+**Mean Absolute Error (MAE)**
+
+```text
+MAE = mean(|Actual RUL - Predicted RUL|)
+```
+
+**Root Mean Squared Error (RMSE)**
+
+```text
+RMSE = sqrt(mean((Actual RUL - Predicted RUL)^2))
+```
+
+Both metrics will be reported in minutes.
+
+Lower MAE and RMSE indicate smaller prediction errors.
+
+### 6.4 Evaluation Results
+
+The final comparison will report:
+
+- MAE per test bearing
+- RMSE per test bearing
+- Performance by operating condition
+- Overall test MAE and RMSE
+- Actual versus predicted RUL plots
+- Comparative LSTM and GRU results
+
+No experimental results or model winner are claimed before completing the experiments.
+
+---
+
+## 7. Historical Maintenance Simulation
+
+The project will include a retrospective maintenance decision simulation.
+
+The purpose is to investigate how RUL predictions could influence replacement timing.
+
+### Strategy A: Fixed-Interval Replacement
+
+Bearings are replaced according to a predefined operating-time interval.
+
+### Strategy B: RUL-Based Replacement
+
+Replacement is triggered when predicted RUL falls below a predefined lead-time threshold.
+
+```text
+If Predicted RUL <= Replacement Threshold:
+    Recommend Replacement
+Else:
+    Continue Operation
+```
+
+### Simulation Evaluation
+
+The simulation will compare:
+
+- Replacement timing
+- Hypothetical preventive replacement costs
+- Hypothetical failure penalties
+- Differences between maintenance policies
+
+Policy thresholds and cost assumptions will be specified without using future outcomes from test bearings.
+
+**Important:** The simulation uses historical experimental data and hypothetical replacement decisions. It does not demonstrate validated industrial cost savings.
+
+---
+
+## 8. Streamlit Prototype
+
+A Streamlit dashboard concept has been designed to illustrate time-series monitoring and threshold-based maintenance alerts.
+
+The existing prototype illustrates interface behavior rather than validated RUL prediction performance.
+
+The displayed defect probability is not equivalent to RUL in minutes.
+
+Further integration with the trained RUL models may be considered after the core experiments are completed.
+
+The prototype is not connected to live factory sensors.
+
+---
+
+## 9. Technology Stack
 
 | Purpose | Technology |
-| --- | --- |
-| Programming | Python |
-| Data analysis | NumPy, pandas |
-| Classical machine learning | scikit-learn |
+|---|---|
+| Programming language | Python |
+| Data processing | NumPy, pandas |
+| Signal processing | SciPy, PyWavelets |
+| Baseline machine learning | scikit-learn |
 | Deep learning | PyTorch |
-| UI prototype | Streamlit |
-| Plots | Matplotlib / Plotly (as needed) |
+| Evaluation | scikit-learn metrics |
+| Visualization | Matplotlib, Plotly |
+| Optional dashboard | Streamlit |
+| Version control | Git and GitHub |
 
-## Repository Status
+---
 
-This repository documents an **in-progress** course project. The Streamlit interface design is available as a prototype concept; this README does not claim that the full RUL pipeline, trained models, or evaluated predictions are already complete. Training scripts, setup commands, data-loading instructions, and results should be documented here **when the corresponding files are committed and verified**.
+## 10. Project Timeline
 
-The original datasets should be obtained from their respective sources; avoid committing large raw datasets without checking their licenses and repository size limits.
+| Date | Planned Milestone |
+|---|---|
+| 20 October 2026 | Project Proposal, Tech Stack, and MVP Definition |
+| 3 November 2026 | Literature Review, Core Code, Baseline Simulation, and Test Plan |
+| 24 November 2026 | Feature Development, Testing Progress, and Issue Tracking |
+| 8 December 2026 | Feature Development, Testing Progress, and Issue Tracking |
+| 22 December 2026 | Demonstration, Run Instructions, and Packaging |
+| 12 January 2027 | Final Report and Presentation (subject to course confirmation) |
 
-## Limitations and Responsible Research
+---
 
-- XJTU-SY contains only **15 independent bearing histories**; performance on unseen bearings may vary substantially.
-- Randomly splitting windows from the same bearing across train/test can cause data leakage.
-- LSTM input windows must not include future observations.
-- Lab-based results cannot be assumed to generalize to factory machines.
-- Dataset and paper attribution, transparent methods, and honest reporting are required; no personal data is involved.
+## 11. Planned Deliverables
 
-## Team
+### November 3 Milestone
+
+- [x] Project proposal completed
+- [x] Three research papers selected
+- [x] Literature review drafted
+- [x] Test plan prepared
+- [ ] XJTU-SY data-loading pipeline
+- [ ] Statistical and wavelet feature extraction
+- [ ] RUL label generation
+- [ ] Random Forest baseline implementation
+- [ ] Initial MAE/RMSE evaluation
+- [ ] Reproducible baseline simulation
+
+### Subsequent Development
+
+- [ ] Standard LSTM implementation
+- [ ] Standard GRU implementation
+- [ ] Hyperparameter tuning
+- [ ] Bearing-disjoint model comparison
+- [ ] Per-bearing evaluation
+- [ ] Historical maintenance simulation
+- [ ] Final report and demonstration
+
+---
+
+## 12. Reproducibility
+
+The project aims to provide a reproducible experimental workflow.
+
+The repository will progressively include:
+
+- Source code
+- Dataset-loading instructions
+- Preprocessing scripts
+- Feature-extraction scripts
+- Model implementations
+- Evaluation scripts
+- Configuration files
+- Test results
+- Documentation
+
+The original datasets should be obtained from their respective sources.
+
+Large raw datasets should not be committed without checking licensing conditions and repository size limits.
+
+---
+
+## 13. Limitations
+
+The project has several important limitations:
+
+1. XJTU-SY contains only 15 independent bearing histories.
+2. Model performance may vary across operating conditions.
+3. Randomly splitting windows from the same bearing can cause data leakage.
+4. Future observations must not be included in model inputs.
+5. Laboratory results do not establish real-world industrial performance.
+6. Maintenance simulation costs are hypothetical.
+7. The project does not claim a novel prediction algorithm.
+8. The project does not claim that either LSTM or GRU is superior before experimental evaluation.
+
+---
+
+## 14. Team Members
+
+**Team 3**
 
 - Akram Serrar
 - Seyed Hosseini Rivandi
 - Yeganeh Seyyed Abady
 
-## Selected References
+---
 
-1. Dhungana et al. (2026). *The International Journal of Advanced Manufacturing Technology*. [DOI: 10.1007/s00170-025-17139-6](https://doi.org/10.1007/s00170-025-17139-6)
-2. Dai et al. (2026). *Frontiers in Computer Science*. [DOI: 10.3389/fcomp.2026.1833609](https://doi.org/10.3389/fcomp.2026.1833609)
-3. Ahmad et al. (2019). *Reliability Engineering & System Safety*. [DOI: 10.1016/j.ress.2018.02.003](https://doi.org/10.1016/j.ress.2018.02.003)
+## 15. Selected References
 
-Additional supporting papers are documented in the project literature review.
+**[1]** H. Dhungana, A.-L. Kampen, A. S. Lundervold, and K. Øvsthus,  
+"Remaining Useful Life Prediction of Rolling Bearings via Wavelet Feature Fusion and LSTM Networks,"  
+*The International Journal of Advanced Manufacturing Technology*, vol. 142, pp. 2913–2930, 2026.  
+DOI: https://doi.org/10.1007/s00170-025-17139-6
+
+**[2]** J. Li, Z. Wang, X. Liu, and Z. Feng,  
+"Remaining Useful Life Prediction of Rolling Bearings Using GRU-DeepAR with Adaptive Failure Threshold,"  
+*Sensors*, vol. 23, no. 3, article 1144, 2023.  
+DOI: https://doi.org/10.3390/s23031144
+
+**[3]** H. Wang, H. Liao, X. Ma, and R. Bao,  
+"Remaining Useful Life Prediction and Optimal Maintenance Time Determination for a Single Unit Using Isotonic Regression and Gamma Process Model,"  
+*Reliability Engineering & System Safety*, vol. 210, article 107504, 2021.  
+DOI: https://doi.org/10.1016/j.ress.2021.107504
 
 ---
 
-*Course project — Case Study: Intelligent Systems in Production (Team 3).*
+## Project Status
+
+**This repository documents an ongoing Master's-level course project.**
+
+The proposed methodology, literature review, and evaluation strategy have been defined.
+
+Model training, comparative experiments, and maintenance simulation will be documented as implementation progresses.
+
+No unverified model accuracy, completed experiment, or industrial cost saving is claimed.
+
+---
+
+*Case Study: Intelligent Systems in Production — Team 3*  
+*Technische Hochschule Deggendorf*
