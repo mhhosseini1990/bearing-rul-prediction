@@ -1,0 +1,53 @@
+# XJTU-SY bearing-level split — baseline v1
+# Shared by LSTM and GRU. No bearing may occur in multiple partitions.
+# Split: 9 train / 3 validation / 3 test, with all 3 operating conditions represented.
+
+dataset: XJTU-SY
+split_name: bearing_level_stratified_v1
+split_unit: bearing
+rul_unit: remaining_snapshots
+
+operating_conditions:
+  condition_1:
+    folder: 35Hz12kN
+    speed_hz: 35
+    load_kn: 12
+  condition_2:
+    folder: 37.5Hz11kN
+    speed_hz: 37.5
+    load_kn: 11
+  condition_3:
+    folder: 40Hz10kN
+    speed_hz: 40
+    load_kn: 10
+
+train:
+  - Bearing1_1
+  - Bearing1_2
+  - Bearing1_3
+  - Bearing2_1
+  - Bearing2_2
+  - Bearing2_3
+  - Bearing3_1
+  - Bearing3_2
+  - Bearing3_3
+
+validation:
+  - Bearing1_4
+  - Bearing2_4
+  - Bearing3_4
+
+test:
+  - Bearing1_5
+  - Bearing2_5
+  - Bearing3_5
+
+rules:
+  no_bearing_overlap: true
+  keep_complete_bearing_runs: true
+  same_split_for_models: [LSTM, GRU]
+  fit_preprocessing_on_train_only: true
+  test_reserved_for_final_evaluation: true
+
+# Bearing directory names verified locally on 28 October 2026.
+# CSV contents, chronology, and measurement integrity remain to be checked.

@@ -5,7 +5,7 @@
 **Dataset:** XJTU-SY  
 **Models:** LSTM and GRU  
 **Document type:** Living verification and evaluation specification  
-**Version:** 2.0 | 28 October 2026
+**Version:** 2.1 | 28 October 2026
 
 ## 1. Purpose and Scope
 
@@ -55,7 +55,7 @@ The `src/` subdirectories and additional test files above are **proposed respons
 7. **Model selection:** use validation data for tuning; reserve the test bearings for final evaluation. Do not tune based on test scores.
 8. **Reported performance:** include MAE and RMSE, units, sample aggregation method, and preferably per-bearing results. A single pooled score must not hide uneven bearing performance.
 
-**Initial split policy:** 10 training, 2 validation and 3 test bearings from 15 XJTU-SY bearing histories. Use complete bearing IDs as indivisible units. Freeze and commit the explicit ID lists in configuration before any training. Aim for operating-condition coverage and report unavoidable imbalance; do not claim a random 10/2/3 split guarantees representative conditions. The exact IDs remain pending verification of the downloaded dataset inventory.
+**Initial split policy:** 9 training, 3 validation and 3 test bearings from 15 XJTU-SY bearing histories. Each of the three operating conditions contributes 3 training, 1 validation and 1 test bearing. Use complete bearing IDs as indivisible units; the fixed assignments are recorded in `configs/bearing_split_v1.yaml` and described in `docs/DATA_SPLIT.md`. The names and presence of all 15 bearing directories have been verified against the local dataset inventory; CSV contents, chronological order and measurement integrity are not yet verified. This is a project-defined split, not an official benchmark split. Use identical assignments for LSTM and GRU, and keep test bearings untouched during tuning.
 
 
 ### 3.1 Configurable Baseline Experiment Contract
@@ -72,7 +72,7 @@ The `src/` subdirectories and additional test files above are **proposed respons
 | Window stride | 1 snapshot | Fixed initial evaluation cadence |
 | Scaling | StandardScaler fit on training snapshot features only | Avoids validation/test leakage; train-only statistics |
 | Output | One scalar predicted RUL in snapshot steps | Identical output contract for LSTM and GRU |
-| Dataset split | 10 train / 2 validation / 3 test bearings | IDs frozen after inspecting dataset inventory |
+| Dataset split | 9 train / 3 validation / 3 test bearings | Fixed bearing IDs verified against local directory inventory; CSV integrity pending |
 | Primary metrics | MAE and RMSE in snapshot steps | Report pooled and per-bearing results; note weighting |
 
 **Important:** These are explicit **initial engineering choices**, not parameters asserted to be specified by the three literature sources or optimal for XJTU-SY. If the final approved proposal mandates a different feature representation, change the configuration and corresponding tests together under version control.
@@ -96,7 +96,7 @@ The `src/` subdirectories and additional test files above are **proposed respons
 | T-03 | Targets | Label alignment with sequence endpoint | Each sequence predicts the RUL of its last observed time step | P0 |
 | S-01 | Splits / `test_splits.py` | Partition bearing IDs | Train, validation and test ID sets are pairwise disjoint | P0 |
 | S-02 | Splits | Fixed seed and fixed bearing list | Repeated splitting yields the same assignments | P0 |
-| S-03 | Splits | Check completeness and configured proportions | Each intended bearing assigned once; expected 10/2/3 counts if selected | P0 |
+| S-03 | Splits | Check completeness and configured proportions | Each intended bearing assigned once; expected 9/3/3 counts (3/1/1 per condition) | P0 |
 | Q-01 | Sequences / `test_sequences.py` | Construct 20-step temporal windows with stride 1 | For `N >= 20`, exactly `N-19` windows, each shaped `(20, feature_count)`, with endpoint-aligned labels | P0 |
 | Q-02 | Sequences | First available prediction and short histories | Boundary behavior matches the documented policy | P1 |
 | Q-03 | Sequences | Mutate future observations | Earlier windows and their inputs do not change | P0 |
@@ -189,3 +189,5 @@ This document is the standing reference for tests across the project lifecycle. 
 ## 10. Traceability and Ownership
 
 Each implemented test should retain its test-case ID in its name, documentation or test metadata. Map the test case to the relevant source module and requirement. Code reviewers should verify that new functionality has appropriate test coverage and that any changes preserve the agreed LSTM-versus-GRU comparison protocol.
+
+**Document maintenance rule:** Update this plan when the system contract changes, not merely when a task is completed. Operational status, deadlines and next-action checklists belong in project tracking documents rather than this test plan.
