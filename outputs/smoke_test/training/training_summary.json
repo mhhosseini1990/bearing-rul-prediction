@@ -1,0 +1,35 @@
+{
+  "run_name": "smoke_test",
+  "seed": 42,
+  "device": "cpu",
+  "epochs_requested": 2,
+  "batch_size": 64,
+  "learning_rate": 0.001,
+  "patience": 2,
+  "sequence_length": 20,
+  "hidden_size": 64,
+  "target_scale_minutes": 2518.0,
+  "sequence_counts": {
+    "train": 6861,
+    "validation": 1622,
+    "test": 448
+  },
+  "models": {
+    "lstm": {
+      "parameter_count": 19009,
+      "best_epoch": 1,
+      "epochs_completed": 2,
+      "best_validation_mse_scaled": 0.08206875544894342,
+      "checkpoint_path": "outputs\\smoke_test\\checkpoints\\best_lstm.pt",
+      "history_path": "outputs\\smoke_test\\training\\lstm_history.csv"
+    },
+    "gru": {
+      "parameter_count": 14273,
+      "best_epoch": 2,
+      "epochs_completed": 2,
+      "best_validation_mse_scaled": 0.08709542372272007,
+      "checkpoint_path": "outputs\\smoke_test\\checkpoints\\best_gru.pt",
+      "history_path": "outputs\\smoke_test\\training\\gru_history.csv"
+    }
+  }
+}
