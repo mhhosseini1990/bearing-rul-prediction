@@ -5,7 +5,7 @@
 dataset: XJTU-SY
 split_name: bearing_level_stratified_v1
 split_unit: bearing
-rul_unit: remaining_snapshots
+rul_unit: minutes
 
 operating_conditions:
   condition_1:
