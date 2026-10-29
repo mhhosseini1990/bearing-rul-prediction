@@ -4,395 +4,352 @@
 **Course:** Case Study: Intelligent Systems in Production  
 **Dataset:** XJTU-SY  
 **Models:** LSTM and GRU  
-**Document type:** Living verification and evaluation specification  
-**Version:** 2.2 | 28 October 2026
+**Document:** Verification, validation, regression and release test plan  
+**Version:** 3.0 — 29 October 2026  
+**Status:** Living specification; baseline implementation completed, additional verification pending  
+**Repository target:** `docs/TEST_PLAN.md`
 
-## 1. Purpose and Scope
+> **Evidence convention.** **Observed** means an execution result previously reported by the team, not independently rerun while preparing this document. **Planned / NOT VERIFIED** means a requirement or test whose passing result has not been supplied. A test is **PASS** only when a reproducible run log demonstrates it. The test plan is not a substitute for a test execution report.
 
-This document defines the planned verification and evaluation strategy for predicting rolling-bearing Remaining Useful Life (RUL) from historical vibration measurements. The project compares LSTM and GRU under a common, past-only, wavelet-based feature pipeline. This is a living specification applicable throughout development and evaluation. Test execution evidence is maintained separately; the plan itself does not claim passing tests or measured results.
+## 1. Purpose, scope and claims
 
-**In scope:** data ingestion, chronology, wavelet feature extraction, RUL target generation, bearing-level dataset splits, sequence construction, normalization, model interfaces, training behavior, regression metrics, fair comparison, reproducibility, and historical replay.
+The system estimates **Remaining Useful Life (RUL), in minutes**, for rolling bearings from historical vibration recordings. The implementation extracts past-only wavelet features, builds temporal sequences, trains LSTM and GRU regressors, evaluates on held-out complete bearing histories, and replays illustrative maintenance decisions. A local Streamlit dashboard visualizes stored results.
 
-**Out of scope:** live industrial deployment, sensor hardware, verified maintenance cost savings, and claims of real-world operational reliability.
+**In scope:** dataset ingestion and validation; chronology; target construction; wavelet extraction; leakage prevention; split integrity; normalization; sequence alignment; LSTM/GRU training and inference; metrics; comparison fairness; historical replay; dashboard; reproducibility; release readiness; negative/error-path tests.
 
-## 2. Project Test Architecture
+**Out of scope:** live industrial sensing; calibrated defect probabilities; actual factory maintenance interventions; independently verified savings; production safety certification; guaranteed cross-machine generalization. The dashboard is a local **historical-results viewer**, not a live predictive monitoring service.
+
+## 2. Baseline system contract
+
+| Component | Baseline specification | Evidence / verification requirement |
+|---|---|---|
+| Dataset | XJTU-SY, 15 complete bearing runs, 3 operating conditions | Dataset provenance + validation log |
+| Recordings | 9,216 CSV snapshots; each 32,768 vibration measurements per channel; horizontal and vertical channels | Structural validation observed; verify counts on rerun |
+| Cadence | One 1.28-second recording each nominal minute, 25.6 kHz | Dataset protocol; not an independent timestamp audit |
+| Endpoint | Final recorded snapshot of the experimental run-to-failure history | End-of-recording proxy; not necessarily mechanical disintegration |
+| Target | `rul_minutes(i) = (N - 1 - i) × 1 minute` for zero-based snapshot index `i` | Offline label generation; endpoint must never enter model inputs |
+| Features | `db4` DWT, level 3, `symmetric`; mean squared coefficient energies of A3/D3/D2/D1 in both channels | Exactly 8 finite features per valid snapshot |
+| Feature table | 9,216 rows × 8 wavelet features, plus identifiers/targets as applicable | Check unique `(bearing_id, step)` |
+| Split | 9 train / 3 validation / 3 test **bearings**, 3/1/1 per operating condition | Fixed `configs/bearing_split_v1.yaml` |
+| Bearing IDs | Train: `Bearing1_1..1_3`, `Bearing2_1..2_3`, `Bearing3_1..3_3`; validation: `Bearing1_4`, `Bearing2_4`, `Bearing3_4`; test: `Bearing1_5`, `Bearing2_5`, `Bearing3_5` | No shared bearing IDs across partitions |
+| Snapshots by split | 7,032 / 1,679 / 505 (train/validation/test) | Reported baseline counts |
+| Scaling | `StandardScaler` fit **only on training** bearing features; RUL scaling fitted on training labels only | Persist/reuse fitted transformations |
+| Sequences | 20 past-and-current snapshots, stride 1, `(20, 8)` input | 6,861 / 1,622 / 448 windows reported |
+| Models | LSTM and GRU; hidden size 64, 1 layer, scalar RUL output | 19,009 / 14,273 parameters reported |
+| Training | Adam, LR 0.001, MSE, batch 64, seed 42, early stopping patience 7 | Record full configuration, best checkpoint and history |
+| Evaluation | MAE/RMSE **in minutes**, pooled over test windows and per-bearing | Same targets, partitions and evaluation code |
+| Replay | Threshold 120 min, 3 consecutive confirmations, minimum useful lead 30 min | Historical offline decision simulation only |
+| Dashboard | Streamlit + Plotly; reads persisted `outputs/main/` artifacts | Must label source/run and avoid fabricated data |
+
+**Causal prediction rule:** At snapshot `i`, the model may use wavelet features computed from snapshots `i-19` through `i` only. A valid sequence first exists at `i=19`. Wavelet decomposition may use all samples **inside the current completed snapshot**, but never a later snapshot. Ground-truth RUL is derived using the known final snapshot **for supervised training/evaluation only**, never supplied as a model feature.
+
+**Scientific caveat:** The split is project-defined, not an official benchmark. The pooled score is **window-weighted**; unequal bearing lengths may dominate. Hyperparameter selection must use training/validation only. If the existing test results have already influenced tuning choices, disclose that limitation and use a new untouched evaluation protocol for strong post-optimization claims.
+
+## 3. Test strategy, levels and priorities
+
+| Level | Purpose | Typical evidence |
+|---|---|---|
+| Unit | Validate pure functions and failure handling with tiny deterministic fixtures | `pytest` output |
+| Contract | Check schema, shapes, units, model signatures, artifact names | Assertions + fixture files |
+| Integration | Validate preprocessing → sequences → inference → evaluation | Small end-to-end test |
+| Scientific | Prevent leakage and misleading evaluation | Split/causality/weighting checks |
+| Regression | Preserve previously fixed behavior after changes | CI/local test history |
+| Dashboard | Verify correct artifact loading, filters, empty/error states and honest labels | Streamlit smoke test + screenshots |
+| Acceptance | Verify baseline run and evidence package can be reproduced | Run manifest, logs, commit SHA |
+
+**P0 — blocking:** wrong targets, leakage, corrupt data silently accepted, incorrect metrics, non-causal replay, misleading fabricated dashboard outputs.  
+**P1 — required for final submission:** robustness, error handling, reproducibility, dashboard acceptance, meaningful per-bearing reporting.  
+**P2 — enhancements:** accessibility, performance profiling, deployment, optional model optimization.
+
+## 4. Traceable test cases
+
+The IDs below are stable. Record each outcome as `PASS`, `FAIL`, `NOT RUN`, `BLOCKED` or `N/A` with evidence and date. **Do not infer passing status from implemented code.**
+
+### 4.1 Data ingestion and dataset integrity
+
+| ID | Priority | Test / input | Expected acceptance criterion |
+|---|---|---|---|
+| D-01 | P0 | Valid two-channel synthetic CSV | Numeric channels and exact row count preserved |
+| D-02 | P0 | Missing, empty, malformed or wrong-column CSV | Informative error; no silent fallback |
+| D-03 | P0 | Filenames `1.csv`, `2.csv`, `10.csv` | Numeric chronology, not lexical sorting |
+| D-04 | P0 | Duplicate/missing steps, duplicate bearing IDs | Detected or explicitly documented; no silent reordering |
+| D-05 | P0 | NaN, Inf, nonnumeric and unexpected column count | Reject invalid data; report file and reason |
+| D-06 | P1 | Full local dataset scan | Exactly 15 bearing directories and 9,216 valid snapshots; store log |
+| D-07 | P1 | Run metadata/provenance | Dataset version, source and operating conditions documented |
+
+### 4.2 Targets, features and chronology
+
+| ID | Priority | Test / input | Expected acceptance criterion |
+|---|---|---|---|
+| T-01 | P0 | Five snapshots | RUL `[4,3,2,1,0]` minutes |
+| T-02 | P0 | Two bearings with different lengths | Labels calculated independently; last snapshot RUL = 0 for each |
+| T-03 | P0 | Missing/duplicate/nonconsecutive steps | Explicit error or documented strict handling; never fabricated time labels |
+| T-04 | P0 | Input feature matrix inspection | Future endpoint, lifetime `N`, RUL label and test partition flags absent from model inputs |
+| F-01 | P0 | Known signal with independent reference calculation | DWT `db4`, level 3, symmetric; 4 finite energies per channel |
+| F-02 | P0 | Two channels | Exactly 8 features in documented A3/D3/D2/D1 order |
+| F-03 | P0 | Modify future snapshots after time `t` | Features at `t` unchanged |
+| F-04 | P1 | Short/empty/nonnumeric signal | Explicit validation error, no silent wavelet-level downgrade |
+| F-05 | P1 | Repeat same signal | Identical deterministic feature values within numerical tolerance |
+| F-06 | P1 | Extreme but finite vibration amplitudes | No silent overflow or invalid energies; explicit failure if nonfinite |
+
+### 4.3 Split, scaling and sequences
+
+| ID | Priority | Test / input | Expected acceptance criterion |
+|---|---|---|---|
+| S-01 | P0 | Load split YAML | Train/validation/test bearing sets pairwise disjoint |
+| S-02 | P0 | Compare split with dataset manifest | All 15 bearings assigned exactly once, counts 9/3/3 |
+| S-03 | P0 | Count per operating condition | 3/1/1 bearings in train/validation/test per condition |
+| S-04 | P1 | Repeat fixed configuration | Same split and documented ordering |
+| N-01 | P0 | Inject extreme values into validation/test | Fitted scaler statistics unchanged from training-only fit |
+| N-02 | P0 | RUL target scaling | Fit on train labels only; inverse transform returns minutes |
+| N-03 | P1 | Missing fitted scaler or wrong feature order | Clear error; no refit on test data |
+| Q-01 | P0 | `N=25`, length 20, stride 1 | Exactly 6 windows, each `(20,8)` |
+| Q-02 | P0 | Sequence endpoint | Target equals RUL at the final observed step of that window |
+| Q-03 | P0 | Change observations after time `t` | Earlier windows and predictions' inputs unaffected |
+| Q-04 | P0 | Multiple bearing histories | No window crosses a bearing boundary |
+| Q-05 | P1 | `N<20`, `N=20` | 0 and 1 windows respectively; explicit documented behavior |
+| Q-06 | P1 | Full baseline matrix | Expected 6,861 / 1,622 / 448 windows, each `(20,8)` |
+
+### 4.4 Models, training and reproducibility
+
+| ID | Priority | Test / input | Expected acceptance criterion |
+|---|---|---|---|
+| A-01 | P0 | LSTM/GRU forward pass with `(batch,20,8)` | One finite scalar output per sequence |
+| A-02 | P1 | One optimizer step | Finite loss, nonzero gradients and intended parameter update |
+| A-03 | P0 | Same synthetic batch through both models | Same input/output contract and RUL units |
+| A-04 | P0 | Checkpoint selection | Saved best validation checkpoint, not automatically final epoch |
+| A-05 | P1 | Early stopping with controlled loss sequence | Stops according to documented patience and improvement rule |
+| A-06 | P1 | Invalid model input dimensions or missing checkpoint | Informative failure, no fabricated predictions |
+| A-07 | P1 | Fixed-seed repeat in pinned environment | Splits and deterministic outputs reproducible within stated tolerance |
+| A-08 | P1 | Baseline/optimization experiment naming | Separate run directories; baseline outputs never overwritten |
+| A-09 | P1 | Model config audit | Model sizes, hyperparameters and training history logged |
+
+### 4.5 Evaluation and scientific comparison
+
+| ID | Priority | Test / input | Expected acceptance criterion |
+|---|---|---|---|
+| M-01 | P0 | `y=[100,80,60]`, `ŷ=[90,70,50]` | MAE = RMSE = 10 minutes |
+| M-02 | P0 | Perfect predictions | MAE = RMSE = 0 |
+| M-03 | P0 | Empty/mismatched/NaN/Inf arrays | Explicit error |
+| M-04 | P0 | Test predictions vs target CSV | Same bearing/step keys, no duplicate or missing matched rows |
+| M-05 | P0 | Compare LSTM and GRU | Identical 448 held-out sequence targets and evaluation units |
+| M-06 | P0 | Pooled metrics | Window-weighted aggregate computed from **all** matching predictions |
+| M-07 | P1 | Per-bearing metrics | Report 3 test bearings separately with window counts |
+| M-08 | P1 | Run comparison | State model selection procedure and any test-informed tuning limitation |
+| M-09 | P1 | Predicted RUL postprocessing | Negative/clipped values handled by an explicit, consistent policy |
+| M-10 | P1 | Artifact reproducibility | CSV/JSON summaries agree with independently recalculated metrics |
+
+### 4.6 Historical maintenance replay
+
+| ID | Priority | Test / input | Expected acceptance criterion |
+|---|---|---|---|
+| H-01 | P0 | Future prediction changed after time `t` | Decision at `t` unchanged |
+| H-02 | P0 | Three consecutive predictions below 120 min | Alert triggers only on third qualifying observation |
+| H-03 | P0 | One/two isolated low predictions | No premature alert |
+| H-04 | P0 | Alert lead < 30 min | Classified `late` under baseline policy |
+| H-05 | P0 | Alert with sufficient lead but earlier than configured timely band | Classified `early` consistently with implementation contract |
+| H-06 | P0 | Alert in configured timely band | Classified `timely` |
+| H-07 | P0 | No qualifying alert before endpoint | Classified `missed` |
+| H-08 | P1 | Empty/unsorted/duplicate steps or invalid predictions | Explicit rejection or documented handling |
+| H-09 | P1 | Compare replay summary with detailed events | Counts and mean lead times reconcile |
+| H-10 | P1 | Labeling and limitations | Results always called **offline historical simulation**, not verified maintenance savings |
+| H-11 | P1 | Change replay threshold/confirmation count | New run tagged by configuration; old baseline preserved |
+
+**Replay evidence already reported:** `python -m pytest tests/test_maintenance_replay.py -q` returned **14 passed**; `python scripts/run_maintenance_replay.py --run-name main` completed. This is evidence for that executed test module as a whole, **not proof that every new H-01…H-11 case above exists or passes**.
+
+### 4.7 Streamlit dashboard and visualization
+
+| ID | Priority | Test / input | Expected acceptance criterion |
+|---|---|---|---|
+| UI-01 | P0 | Start `python -m streamlit run app.py` | App starts without traceback in supported environment |
+| UI-02 | P0 | Load `outputs/main/evaluation/comparison.csv` | Model comparison matches saved MAE/RMSE; units minutes |
+| UI-03 | P0 | Select each test bearing/model | Actual/predicted RUL traces use correct bearing, order and time steps |
+| UI-04 | P0 | Replay tab | Early/timely/late/missed and lead-time values match replay artifacts |
+| UI-05 | P0 | No result files | Explicit helpful message, **no synthetic fallback presented as measured results** |
+| UI-06 | P0 | Change selected model/bearing | Other model/bearing data never leak into current view |
+| UI-07 | P1 | Training tab | Training/validation curves and best epoch match saved histories |
+| UI-08 | P1 | Run app from another working directory | Paths resolved relative to repository/app location, or clear documented requirement |
+| UI-09 | P1 | Malformed CSV/missing columns/NaN values | Clear validation error, no crash or misleading plot |
+| UI-10 | P1 | Chart legends and axes | Clear units, model names, source run and test-only labeling |
+| UI-11 | P1 | Local interactive smoke test | Sidebar navigation, controls and plots work in browser |
+| UI-12 | P1 | Reproducible deployment bundle | Only permitted, appropriately sized non-sensitive derived artifacts included |
+| UI-13 | P2 | Accessibility/responsive layout | Readable on laptop; distinguish lines without color alone |
+| UI-14 | P2 | Optional online deployment | Public link opens without access to local filesystem or raw dataset |
+
+**Dashboard integrity rule:** A synthetic S-curve defect probability is **not** an output of the RUL regression models. It must not be presented as actual LSTM/GRU predictions. If a synthetic demo is retained, label it prominently as simulated and separate from the project results.
+
+### 4.8 Visualization, integration and operational checks
+
+| ID | Priority | Test / input | Expected acceptance criterion |
+|---|---|---|---|
+| V-01 | P1 | Regenerate baseline figures | Expected figure files exist and are readable |
+| V-02 | P1 | Compare chart points to source CSVs | Chart values equal source values; no fabricated interpolation |
+| V-03 | P1 | Plot training histories | Best validation epoch and overfitting patterns correctly described |
+| I-01 | P1 | Tiny synthetic pipeline | Load → wavelet → target → split → scale → sequence → model → metrics |
+| I-02 | P1 | Real subset smoke test | Valid finite features and aligned predictions with recorded IDs |
+| R-01 | P1 | Clean environment install | `pip install -r requirements.txt` succeeds on documented supported Python |
+| R-02 | P1 | Full test suite | Exit code 0; record passed/failed/skipped and environment |
+| R-03 | P1 | Fresh clone without raw data | Unit tests and dashboard error states work; no undocumented data requirement |
+| R-04 | P1 | Repository hygiene | No raw XJTU-SY, secrets, oversized checkpoints or accidental generated data committed |
+| R-05 | P1 | Experiment provenance | Commit SHA, seed, configs, versions, source files and output paths recorded |
+| R-06 | P1 | CI | CI runs portable tests; full dataset/training tests explicitly separate |
+
+## 5. Test fixtures and methodology
+
+1. **Unit fixtures:** synthetic finite two-channel arrays; tiny bearing histories of lengths 0, 1, 5, 19, 20 and 25; intentionally malformed CSVs; known metric vectors. Keep small and commit-safe.
+2. **Integration fixtures:** small explicitly identified XJTU-SY subsets if redistribution is permitted; otherwise local-only fixture paths and documented reproduction commands.
+3. **Evaluation fixtures:** three complete held-out test bearings (`Bearing1_5`, `Bearing2_5`, `Bearing3_5`). Never randomly mix windows from a bearing across splits.
+4. **Dashboard fixtures:** minimal valid comparison, predictions, histories and replay CSV/JSON plus missing/corrupt variants. Test dashboard behavior without full model training.
+5. **Negative controls:** modify future data; inject extreme test-only values; reorder snapshots; duplicate bearing IDs; delete artifacts; swap model labels. Each should either leave earlier predictions invariant or produce an explicit failure.
+6. **Numerical tolerance:** use exact equality for IDs/counts and deterministic labels; use explicit `pytest.approx`/`numpy.testing.assert_allclose` tolerances for floating-point transforms. Record device-dependent tolerance for PyTorch repeats.
+
+## 6. Recorded baseline evidence (not a new execution)
+
+The following values were reported from the completed local baseline workflow. They should be re-verified from saved artifacts and a timestamped execution report before final submission.
+
+### 6.1 Training and held-out evaluation
+
+| Model | Best epoch | Best validation MSE (scaled) | Test MAE (min) | Test RMSE (min) |
+|---|---:|---:|---:|---:|
+| LSTM | 1 | 0.082069 | 541.104 | 741.903 |
+| GRU | 5 | 0.030729 | 148.382 | 331.900 |
+
+**Test set:** 448 overlapping windows across 3 unseen bearing runs. GRU has lower pooled MAE/RMSE in this run, but this does **not** establish universal model superiority. LSTM validation loss rises after its first epoch; GRU validation is lowest at epoch 5 and later worsens. This is consistent with overfitting and/or bearing distribution shift; investigate using validation data rather than selecting settings by repeatedly checking the test set.
+
+| Test bearing | Windows | LSTM MAE (min) | GRU MAE (min) |
+|---|---:|---:|---:|
+| Bearing1_5 | 33 | 814.867 | 928.545 |
+| Bearing2_5 | 320 | 619.461 | 77.789 |
+| Bearing3_5 | 95 | 182.069 | 115.166 |
+
+**Interpretation:** `Bearing2_5` contributes 320/448 windows (71.4%) and therefore heavily influences the pooled metrics. GRU is worse than LSTM on `Bearing1_5`. Report both pooled and per-bearing results; consider equal-bearing aggregation as an additional, clearly labeled sensitivity analysis.
+
+### 6.2 Historical maintenance replay
+
+**Policy:** RUL alert threshold 120 minutes; 3 consecutive confirmations; minimum useful lead 30 minutes.
+
+| Model | Bearing1_5 | Bearing2_5 | Bearing3_5 | Timely rate | Mean alert lead |
+|---|---|---|---|---:|---:|
+| LSTM | Late (7 min) | Early (144 min) | Timely (88 min) | 1/3 = 33.33% | 79.67 min |
+| GRU | Late (8 min) | Early (171 min) | Timely (84 min) | 1/3 = 33.33% | 87.67 min |
+
+**Limit:** This is a counterfactual replay on historical predictions, not a live deployment, an economic impact estimate, or a validated maintenance policy. An apparent lead time is relative to the experimental final snapshot.
+
+### 6.3 Evidence status ledger
+
+| Evidence | Current status | Next verification |
+|---|---|---|
+| Dataset structural scan (9,216 files) | **Observed earlier**: zero errors | Save scan output with date + commit |
+| Loader synthetic tests | **Observed earlier**: 9 passed | Run full suite and archive log |
+| Replay test module | **Observed earlier**: 14 passed | Save command, date, SHA, full log |
+| Baseline training/evaluation | **Observed earlier**: metrics above | Recompute from source prediction CSVs |
+| Baseline replay execution | **Observed earlier**: completed | Reconcile detailed and summary artifacts |
+| Eleven static charts | **Reported generated**, not all manually reviewed | Verify existence, labels, source consistency |
+| Streamlit dashboard | **Code prepared**, not independently smoke-tested here | UI-01…UI-11 local test |
+| Entire pytest suite | **NOT VERIFIED for current commit** | `python -m pytest tests/ -v` |
+| Fresh clone / clean install | **NOT VERIFIED** | R-01 and R-03 |
+| Online deployment | **NOT DONE** | Optional UI-14 |
+
+## 7. Execution procedure and evidence capture
+
+**Environment:** Windows PowerShell in the project root; use the project Python environment. Replace any paths only if the repository actually differs. Do not run full training during every smoke test.
+
+```powershell
+# 1. Identify exact source revision and Python version
+git rev-parse HEAD
+python --version
+python -m pip freeze > test-environment-freeze.txt
+
+# 2. Run all portable automated tests
+$env:PYTHONPATH = "src"
+python -m pytest tests/ -v 2>&1 | Tee-Object -FilePath test-results-pytest.txt
+
+# 3. Recheck replay tests specifically
+python -m pytest tests/test_maintenance_replay.py -q
+
+# 4. Reproduce historical replay using existing prediction artifacts
+python scripts/run_maintenance_replay.py --run-name main
+
+# 5. Smoke-test local dashboard (then inspect in browser)
+python -m streamlit run app.py
+```
+
+**Note:** `test-environment-freeze.txt` and `test-results-pytest.txt` are local evidence files; inspect before committing. If `scripts/validate_dataset.py` or any other path is different in the current repository, use its actual CLI rather than assuming the command. The `--run-name main` replay may replace existing derived outputs: back up or use a distinct run name when comparing experiments.
+
+**Required execution record:**
 
 ```text
-rolling-bearing-rul-prediction/
-├── configs/
-│   └── bearing_split_v1.yaml    # Fixed 9/3/3 bearing assignments
-├── data/raw/                   # Local XJTU-SY files (not committed)
-├── docs/
-│   ├── TEST_PLAN.md            # This verification contract
-│   └── DATA_SPLIT.md           # Split rationale and bearing IDs
-├── scripts/
-│   └── validate_dataset.py     # Local structural CSV validation
-├── src/bearing_rul/
-│   ├── data/
-│   │   ├── xjtu_loader.py      # CSV loading and chronological manifest
-│   │   ├── rul_labels.py       # RUL labels
-│   │   └── splits.py           # Bearing partition utilities
-│   ├── features/               # Wavelet feature extraction
-│   ├── models/                 # LSTM and GRU (planned)
-│   └── evaluation/             # Metrics and replay
-├── tests/
-│   ├── test_loader.py          # Loader tests
-│   ├── test_targets.py         # RUL target tests
-│   ├── test_splits.py          # Split tests
-│   ├── test_features.py        # Feature tests
-│   └── test_metrics.py         # Metric tests
-└── results/                    # Experiment evidence (planned)
+Execution ID:
+Date/time (timezone):
+Operator:
+Git commit SHA / branch:
+OS / Python / PyTorch / Streamlit versions:
+Dataset provenance / local file count:
+Configuration and seed:
+Command:
+Test IDs covered:
+PASS / FAIL / SKIP / NOT RUN counts:
+Artifact paths / hashes:
+Observed deviations and issue links:
+Reviewer and approval date:
 ```
 
-Additional tests for sequences, scaling, model behavior and end-to-end integration are planned. The tree identifies intended responsibilities; the exact presence of every file must be checked against the repository. The repository may still contain legacy model files; these are not part of the approved LSTM-versus-GRU comparison.
+## 8. Quality gates and release acceptance
 
-## 3. Scientific Evaluation Contract
-
-1. **Unit of independence:** a complete bearing run. No windows or samples from one bearing may appear in more than one train/validation/test partition.
-2. **Temporal causality:** a prediction at time *t* may use only measurements available at or before *t*. Centered windows or future-informed preprocessing are prohibited.
-3. **RUL definition (confirmed sampling protocol):** XJTU-SY records one 32,768-sample, 1.28-second vibration snapshot per minute, at 25.6 kHz. For an ordered, complete run with `N` snapshots and zero-based index `i`, define `rul_minutes(i) = (N - 1 - i) × 1 minute`. This is the remaining nominal elapsed time **between the current recorded snapshot and the final recorded snapshot**. The final recorded snapshot receives zero minutes as an **experimental end-of-life proxy**, not a claim of total mechanical breakdown. The official dataset documentation reports the experiments as complete run-to-failure and describes a stop criterion of vibration amplitude exceeding `10 × Ah`, where `Ah` is a normal-stage maximum. The model must not receive `N`, the future endpoint, the remaining-count label, or any future-derived feature at inference time. Distinguish the reported full experimental lifetime (which may count the first recording interval) from the last-to-current snapshot difference.
-4. **Feature pipeline (initial contract):** apply a level-3 discrete wavelet transform (DWT), `db4` wavelet, `symmetric` boundary mode, independently to each available vibration channel in each single measurement snapshot. Compute mean squared coefficient energy for approximation `A3` and details `D3`, `D2`, `D1` (four features per channel). Reject snapshots too short for a valid level-3 decomposition rather than silently changing levels. The snapshot itself must be available at prediction time; never include later snapshots. Any additional features require a documented version change.
-5. **Normalization:** fit scalers on training bearings only; apply the same fitted transformation to validation and test bearings.
-6. **Model fairness:** use identical bearing partitions, prediction targets, available input history, feature definitions and evaluation code for LSTM and GRU. Report model-specific hyperparameters and tuning budgets.
-7. **Model selection:** use validation data for tuning; reserve the test bearings for final evaluation. Do not tune based on test scores.
-8. **Reported performance:** include MAE and RMSE, units, sample aggregation method, and preferably per-bearing results. A single pooled score must not hide uneven bearing performance.
-
-**Fixed split policy:** 9 training, 3 validation and 3 test bearings from 15 XJTU-SY bearing histories. Each of the three operating conditions contributes 3 training, 1 validation and 1 test bearing. Complete bearing runs are indivisible; assignments are in `configs/bearing_split_v1.yaml` and `docs/DATA_SPLIT.md`. Local checks confirmed all 15 bearing directories and 9,216 CSV files; filename sequences were consecutive and all 9,216 files passed the project structural validation (two numeric finite vibration columns and 32,768 rows). These checks do not independently establish physical signal quality or exact timestamp integrity. This is a project-defined split, not an official benchmark split. Keep the test bearings untouched during tuning.
-
-
-### 3.1 Configurable Baseline Experiment Contract
-
-| Parameter | Initial setting | Rationale / limitation |
-|---|---|---|
-| RUL unit | Minutes, derived from the documented 1-minute sampling interval | Nominal time to the last recorded snapshot, not independently timestamp-verified time |
-| Failure endpoint | Last snapshot of a documented complete run-to-failure experiment | Experimental stop criterion: maximum vibration amplitude exceeds `10 × Ah`; endpoint proxy, not necessarily total breakdown |
-| Vibration channels | Horizontal and vertical accelerometer signals | Two columns confirmed in local CSV validation |
-| Wavelet transform | DWT `db4`, level `3`, mode `symmetric` | Reproducible starting configuration, not a proven optimum |
-| Wavelet features | Mean squared energy of `A3`, `D3`, `D2`, `D1` per channel | Fixed eight-dimensional feature vector if two channels are available |
-| Sequence length | 20 consecutive measurement snapshots | Initial hyperparameter; short runs produce no full windows |
-| Sequence target | RUL at the final snapshot of each input window | Strict causal alignment |
-| Window stride | 1 snapshot | Fixed initial evaluation cadence |
-| Scaling | StandardScaler fit on training snapshot features only | Avoids validation/test leakage; train-only statistics |
-| Output | One scalar predicted RUL in minutes | Identical output contract for LSTM and GRU |
-| Dataset split | 9 train / 3 validation / 3 test bearings | Fixed IDs; local structural validation of 9,216 CSVs passed |
-| Primary metrics | MAE and RMSE in minutes | Report pooled and per-bearing results; note unequal bearing lengths and weighting |
-
-**Important:** These are explicit **initial engineering choices**, not parameters asserted to be specified by the three literature sources or optimal for XJTU-SY. If the final approved proposal mandates a different feature representation, change the configuration and corresponding tests together under version control.
-
-**Causality detail:** DWT is computed **within a completed measurement snapshot**, not across the full future bearing history. A prediction at snapshot `i` may use feature vectors only from snapshots `max(0, i-19)` through `i`; the initial version requires 20 complete snapshots and therefore starts at `i=19`.
-
-**RUL label detail:** `rul_remaining_recordings = N - 1 - i` is an auxiliary integer count; `rul_minutes = rul_remaining_recordings × 1` is the primary regression target. The equality of numerical values is specific to the XJTU-SY one-minute sampling protocol. These supervised labels use the known future endpoint **offline**; neither endpoint nor label may be supplied as an inference feature. For `Bearing1_1` (123 files), targets run from 122 minutes at `1.csv` to 0 minutes at `123.csv`.
-
-## 4. Test Cases and Acceptance Criteria
-
-| ID | Area / proposed file | Test case | Expected result / acceptance criterion | Priority |
-|---|---|---|---|---|
-| D-01 | Loading / `test_loader.py` | Load a valid small vibration fixture | Expected channels, rows and numeric values are preserved | P0 |
-| D-02 | Loading | Missing file, empty file or malformed schema | Explicit, informative error; no silent fallback | P0 |
-| D-03 | Loading | Read successive measurements | Chronological ordering and bearing identity are preserved | P0 |
-| F-01 | Features / `test_features.py` | Known synthetic signal through `db4` level-3 DWT energy function | Deterministic finite values, four energies per channel and reference values computed independently | P0 |
-| F-02 | Features | Empty, nonnumeric or invalid signal | Explicit validation error | P1 |
-| F-03 | Features | Change samples after prediction time *t* | Feature vector for time *t* remains unchanged | P0 |
-| T-01 | Targets / `test_targets.py` | Five ordered snapshots with one-minute spacing | `rul_minutes` equals `[4, 3, 2, 1, 0]` minutes and `rul_remaining_recordings` equals `[4, 3, 2, 1, 0]` | P0 |
-| T-02 | Targets | Missing bearing ID, invalid/duplicate/nonconsecutive steps, empty data | Explicit validation error; no fabricated labels | P0 |
-| T-03 | Targets | Label alignment and bearing independence | Each sequence predicts minute-RUL of its last observed step; labels are computed independently for each bearing | P0 |
-| S-01 | Splits / `test_splits.py` | Partition bearing IDs | Train, validation and test ID sets are pairwise disjoint | P0 |
-| S-02 | Splits | Fixed seed and fixed bearing list | Repeated splitting yields the same assignments | P0 |
-| S-03 | Splits | Check completeness and configured proportions | Each intended bearing assigned once; expected 9/3/3 counts (3/1/1 per condition) | P0 |
-| Q-01 | Sequences / `test_sequences.py` | Construct 20-step temporal windows with stride 1 | For `N >= 20`, exactly `N-19` windows, each shaped `(20, feature_count)`, with endpoint-aligned labels | P0 |
-| Q-02 | Sequences | First available prediction and short histories | Boundary behavior matches the documented policy | P1 |
-| Q-03 | Sequences | Mutate future observations | Earlier windows and their inputs do not change | P0 |
-| N-01 | Scaling / `test_scaling.py` | Extreme values only in test data | StandardScaler means/variances equal training-only fit and remain unchanged | P0 |
-| M-01 | Metrics / `test_metrics.py` | `y_true=[100,80,60]`, `y_pred=[90,70,50]` in minutes | MAE = 10 minutes and RMSE = 10 minutes | P0 |
-| M-02 | Metrics | Perfect predictions | MAE = 0 and RMSE = 0 | P0 |
-| M-03 | Metrics | Shape mismatch, empty arrays or NaN/Inf | Explicit error according to the documented metric API | P0 |
-| A-01 | Models / `test_models.py` | LSTM and GRU forward pass on tiny tensors | One finite RUL prediction per input sequence; correct shape | P0 |
-| A-02 | Models | One minimal training step | Loss is finite; gradients/weights update where expected | P1 |
-| A-03 | Models | Compare shared input and output contracts | Both models accept equivalent features and return comparable RUL units | P0 |
-| I-01 | Pipeline / `test_pipeline.py` | Tiny synthetic end-to-end fixture | Loading → features → targets → split → sequences → inference → metrics completes | P1 |
-| R-01 | Reproducibility | Repeat a controlled experiment | Same splits/configuration; deterministic components reproduce results within stated tolerance | P1 |
-| H-01 | Historical replay | Simulate decision at past time *t* | Only information available at *t* affects that decision | P1 |
-
-**Priority:** P0 = required correctness gate; P1 = important additional coverage. This table specifies required behavior; execution outcomes belong in separate test reports.
-
-## 5. Test Data and Fixtures
-
-- **Unit tests:** tiny synthetic arrays, short signals and fabricated bearing IDs; no full dataset download required.
-- **Integration tests:** small, clearly identified subsets of actual XJTU-SY files after access and format validation.
-- **Evaluation:** held-out complete bearing runs, never random rows/windows from the same bearing across partitions.
-- **Fixture policy:** commit only small synthetic fixtures unless the dataset license explicitly permits redistribution. Do not commit large raw vibration data.
-
-## 6. Model Evaluation Procedure
-
-1. Verify data schema and chronological order.
-2. Freeze bearing-level train/validation/test IDs and record operating conditions.
-3. Use the documented 1-minute measurement cadence and the experimental run-to-failure endpoint; calculate minute-RUL as `(N - 1 - i) × 1 minute`.
-4. Extract causal wavelet-based features using the same settings for both models.
-5. Fit any learned preprocessing on training bearings only.
-6. Construct aligned past-only sequences and targets.
-7. Train LSTM and GRU with documented configurations and seeds.
-8. Select hyperparameters using validation bearings only.
-9. Evaluate both models on the same untouched test bearings.
-10. Report MAE and RMSE **in minutes**, both pooled and per-bearing, with aggregation/weighting, configurations and limitations.
-11. Optionally replay historical maintenance decisions as a **simulation**, not verified industrial cost savings.
-
-### Required result record (once experiments exist)
-
-| Field | Description |
+| Gate | Blocking condition / acceptance |
 |---|---|
-| Model | LSTM or GRU |
-| Dataset and bearings | Dataset version and exact train/val/test IDs |
-| RUL unit | Minutes to the final recorded snapshot: `(N - 1 - i) × 1 minute` |
-| Features | Wavelet type/level/statistics and channel selection |
-| Sequence length | Number of past observations used |
-| Training settings | Seed, epochs, batch size, optimizer, learning rate |
-| MAE / RMSE | Held-out test values in minutes |
-| Per-bearing scores | Metrics for each held-out bearing |
-| Runtime / hardware | Environment for reproducibility |
-| Notes | Failures, limitations, and deviations from plan |
+| G1 — Scientific contract | Target units, causal feature policy and fixed bearing split documented and approved |
+| G2 — Core correctness | All applicable P0 loader, label, feature, split, scaling, sequence and metric tests pass |
+| G3 — Training/evaluation | Models produce finite outputs; best checkpoint used; same held-out targets and metrics; limitations stated |
+| G4 — Replay | Replay P0 tests pass; summary reconciles with events; offline simulation labeled clearly |
+| G5 — Dashboard | UI P0 tests pass; displayed values match artifacts; missing files cannot yield fabricated results |
+| G6 — Reproducibility | Full automated suite run logged, dependencies documented, baseline artifacts/configs preserved |
+| G7 — Final submission | Report contains pooled/per-bearing metrics, replay interpretation, unresolved issues and no unsupported deployment claims |
 
-No performance targets are asserted before a baseline experiment. Acceptance for the scientific comparison requires a leakage-free, reproducible protocol and correctly computed metrics, **not** a predetermined accuracy claim.
+**Release decision:** `READY` only if all applicable P0 gates pass with evidence, required P1 exceptions are documented and approved, and the exact Git revision is identified. Otherwise `CONDITIONAL` (known nonblocking gaps) or `NOT READY` (P0 failure/unknown).
 
-### Dataset provenance and verification evidence
+## 9. Open issues and planned improvement work
 
-The project uses the supplied *Introduction to XJTU-SY Bearing Dataset* (sections 1–3) as its primary sampling and failure-protocol source. It states 15 complete run-to-failure bearings, three operating conditions (35 Hz/12 kN, 37.5 Hz/11 kN, 40 Hz/10 kN), 25.6 kHz acquisition, 32,768 samples per 1.28-second recording, one recording per minute, and a vibration-amplitude stopping criterion of `10 × Ah`. It also tabulates bearing lifetimes and CSV counts. The project's local VS Code evidence (28 October 2026) reports 9/9 synthetic loader tests passing and structural validation of 9,216 CSVs from 15 bearings with zero reported errors. This does **not** constitute independent verification of sensor calibration, physically plausible signal behavior, or an external benchmark result.
+These are **proposed GitHub issues**, not assertions that each is a confirmed software bug.
 
-## 7. Test Execution and Evidence
-
-Use `pytest` for automated tests once test modules exist:
-
-```bash
-python -m pytest tests/ -v
-```
-
-Record execution date, commit hash, environment, passed/failed/skipped counts, and any failure explanation. A missing production module during test-first development is an expected initial **RED** state; it is not evidence that the implemented system failed validation.
-
-A test can be marked **PASS** only after execution confirms the documented assertion. Mark unimplemented tests **NOT RUN**, not PASS.
-
-## 8. Quality Gates
-
-**Gate 1 — Test design:** contracts, target definition, data split policy, and P0 assertions agreed.
-
-**Gate 2 — Core implementation:** all applicable P0 unit tests pass; failures and exclusions documented.
-
-**Gate 3 — Integration:** small end-to-end pipeline works with correctly aligned sequences and labels.
-
-**Gate 4 — Model comparison:** LSTM and GRU are evaluated on identical held-out bearings with recorded MAE/RMSE and experiment settings.
-
-**Gate 5 — Final reporting:** results are reproducible to the extent supported by the environment, limitations are disclosed, and any historical replay is labeled as simulation.
-
-## 9. Test Maintenance and Change Control
-
-This document is the standing reference for tests across the project lifecycle. Any change to RUL units, wavelet decomposition, sequence construction, split policy, preprocessing, model interfaces or evaluation metrics must be reflected in the relevant configuration, test assertions and documentation in the same change set.
-
-- Keep test fixtures small, deterministic and independent of the full dataset wherever possible.
-- Add regression tests for each corrected defect.
-- Review causal leakage and bearing-level independence whenever preprocessing or windowing changes.
-- Keep baseline parameters configurable; do not hard-code them as universal scientific requirements.
-- Store test execution results (commit, environment, outcomes and failures) separately from this plan.
-- Do not silently relax acceptance criteria to make a failing implementation pass; document and justify any specification change.
-
-## 10. Traceability and Ownership
-
-Each implemented test should retain its test-case ID in its name, documentation or test metadata. Map the test case to the relevant source module and requirement. Code reviewers should verify that new functionality has appropriate test coverage and that any changes preserve the agreed LSTM-versus-GRU comparison protocol.
-
-**Document maintenance rule:** Update this plan when the system contract changes, not merely when a task is completed. Operational status, deadlines and next-action checklists belong in project tracking documents rather than this test plan.
-# Test Plan — Rolling Bearing RUL Prediction (LSTM vs. GRU)
-
-**Project:** Predictive Maintenance of Rolling Bearings  
-**Course:** Case Study: Intelligent Systems in Production  
-**Dataset:** XJTU-SY  
-**Models:** LSTM and GRU  
-**Document type:** Living verification and evaluation specification  
-**Version:** 2.2 | 28 October 2026
-
-## 1. Purpose and Scope
-
-This document defines the planned verification and evaluation strategy for predicting rolling-bearing Remaining Useful Life (RUL) from historical vibration measurements. The project compares LSTM and GRU under a common, past-only, wavelet-based feature pipeline. This is a living specification applicable throughout development and evaluation. Test execution evidence is maintained separately; the plan itself does not claim passing tests or measured results.
-
-**In scope:** data ingestion, chronology, wavelet feature extraction, RUL target generation, bearing-level dataset splits, sequence construction, normalization, model interfaces, training behavior, regression metrics, fair comparison, reproducibility, and historical replay.
-
-**Out of scope:** live industrial deployment, sensor hardware, verified maintenance cost savings, and claims of real-world operational reliability.
-
-## 2. Project Test Architecture
-
-```text
-rolling-bearing-rul-prediction/
-├── configs/
-│   └── bearing_split_v1.yaml    # Fixed 9/3/3 bearing assignments
-├── data/raw/                   # Local XJTU-SY files (not committed)
-├── docs/
-│   ├── TEST_PLAN.md            # This verification contract
-│   └── DATA_SPLIT.md           # Split rationale and bearing IDs
-├── scripts/
-│   └── validate_dataset.py     # Local structural CSV validation
-├── src/bearing_rul/
-│   ├── data/
-│   │   ├── xjtu_loader.py      # CSV loading and chronological manifest
-│   │   ├── rul_labels.py       # RUL labels
-│   │   └── splits.py           # Bearing partition utilities
-│   ├── features/               # Wavelet feature extraction
-│   ├── models/                 # LSTM and GRU (planned)
-│   └── evaluation/             # Metrics and replay
-├── tests/
-│   ├── test_loader.py          # Loader tests
-│   ├── test_targets.py         # RUL target tests
-│   ├── test_splits.py          # Split tests
-│   ├── test_features.py        # Feature tests
-│   └── test_metrics.py         # Metric tests
-└── results/                    # Experiment evidence (planned)
-```
-
-Additional tests for sequences, scaling, model behavior and end-to-end integration are planned. The tree identifies intended responsibilities; the exact presence of every file must be checked against the repository. The repository may still contain legacy model files; these are not part of the approved LSTM-versus-GRU comparison.
-
-## 3. Scientific Evaluation Contract
-
-1. **Unit of independence:** a complete bearing run. No windows or samples from one bearing may appear in more than one train/validation/test partition.
-2. **Temporal causality:** a prediction at time *t* may use only measurements available at or before *t*. Centered windows or future-informed preprocessing are prohibited.
-3. **RUL definition (confirmed sampling protocol):** XJTU-SY records one 32,768-sample, 1.28-second vibration snapshot per minute, at 25.6 kHz. For an ordered, complete run with `N` snapshots and zero-based index `i`, define `rul_minutes(i) = (N - 1 - i) × 1 minute`. This is the remaining nominal elapsed time **between the current recorded snapshot and the final recorded snapshot**. The final recorded snapshot receives zero minutes as an **experimental end-of-life proxy**, not a claim of total mechanical breakdown. The official dataset documentation reports the experiments as complete run-to-failure and describes a stop criterion of vibration amplitude exceeding `10 × Ah`, where `Ah` is a normal-stage maximum. The model must not receive `N`, the future endpoint, the remaining-count label, or any future-derived feature at inference time. Distinguish the reported full experimental lifetime (which may count the first recording interval) from the last-to-current snapshot difference.
-4. **Feature pipeline (initial contract):** apply a level-3 discrete wavelet transform (DWT), `db4` wavelet, `symmetric` boundary mode, independently to each available vibration channel in each single measurement snapshot. Compute mean squared coefficient energy for approximation `A3` and details `D3`, `D2`, `D1` (four features per channel). Reject snapshots too short for a valid level-3 decomposition rather than silently changing levels. The snapshot itself must be available at prediction time; never include later snapshots. Any additional features require a documented version change.
-5. **Normalization:** fit scalers on training bearings only; apply the same fitted transformation to validation and test bearings.
-6. **Model fairness:** use identical bearing partitions, prediction targets, available input history, feature definitions and evaluation code for LSTM and GRU. Report model-specific hyperparameters and tuning budgets.
-7. **Model selection:** use validation data for tuning; reserve the test bearings for final evaluation. Do not tune based on test scores.
-8. **Reported performance:** include MAE and RMSE, units, sample aggregation method, and preferably per-bearing results. A single pooled score must not hide uneven bearing performance.
-
-**Fixed split policy:** 9 training, 3 validation and 3 test bearings from 15 XJTU-SY bearing histories. Each of the three operating conditions contributes 3 training, 1 validation and 1 test bearing. Complete bearing runs are indivisible; assignments are in `configs/bearing_split_v1.yaml` and `docs/DATA_SPLIT.md`. Local checks confirmed all 15 bearing directories and 9,216 CSV files; filename sequences were consecutive and all 9,216 files passed the project structural validation (two numeric finite vibration columns and 32,768 rows). These checks do not independently establish physical signal quality or exact timestamp integrity. This is a project-defined split, not an official benchmark split. Keep the test bearings untouched during tuning.
-
-
-### 3.1 Configurable Baseline Experiment Contract
-
-| Parameter | Initial setting | Rationale / limitation |
+| Issue | Priority | Description / acceptance |
 |---|---|---|
-| RUL unit | Minutes, derived from the documented 1-minute sampling interval | Nominal time to the last recorded snapshot, not independently timestamp-verified time |
-| Failure endpoint | Last snapshot of a documented complete run-to-failure experiment | Experimental stop criterion: maximum vibration amplitude exceeds `10 × Ah`; endpoint proxy, not necessarily total breakdown |
-| Vibration channels | Horizontal and vertical accelerometer signals | Two columns confirmed in local CSV validation |
-| Wavelet transform | DWT `db4`, level `3`, mode `symmetric` | Reproducible starting configuration, not a proven optimum |
-| Wavelet features | Mean squared energy of `A3`, `D3`, `D2`, `D1` per channel | Fixed eight-dimensional feature vector if two channels are available |
-| Sequence length | 20 consecutive measurement snapshots | Initial hyperparameter; short runs produce no full windows |
-| Sequence target | RUL at the final snapshot of each input window | Strict causal alignment |
-| Window stride | 1 snapshot | Fixed initial evaluation cadence |
-| Scaling | StandardScaler fit on training snapshot features only | Avoids validation/test leakage; train-only statistics |
-| Output | One scalar predicted RUL in minutes | Identical output contract for LSTM and GRU |
-| Dataset split | 9 train / 3 validation / 3 test bearings | Fixed IDs; local structural validation of 9,216 CSVs passed |
-| Primary metrics | MAE and RMSE in minutes | Report pooled and per-bearing results; note unequal bearing lengths and weighting |
+| ISS-01 — Diagnose validation divergence | P1 | Plot and log per-bearing validation error, check scaler/label alignment, evaluate train/val distribution shift; explain LSTM best epoch 1 and GRU best epoch 5 without claiming a single cause |
+| ISS-02 — Controlled hyperparameter experiments | P2 | Tune on train/validation only; one change per run; preserve `main` baseline; log configs/seeds and avoid test-based model selection |
+| ISS-03 — Per-bearing and equal-bearing evaluation | P1 | Publish per-bearing MAE/RMSE, sample counts and optional equal-bearing mean alongside window-weighted pooled score |
+| ISS-04 — Dashboard integration and smoke tests | P1 | Validate actual `outputs/main/` schemas; add UI-01…UI-11 tests and browser screenshots |
+| ISS-05 — Missing/corrupt artifact handling | P0 | Friendly errors, no fabricated values, clear run/source labels |
+| ISS-06 — CI and reproducibility | P1 | Run portable tests on clean install; record pinned compatible environment; exclude full dataset/training from routine CI |
+| ISS-07 — Baseline evidence manifest | P1 | Archive run config, SHA, metrics, replay CSV/JSON and test log; checksum derived artifacts where useful |
+| ISS-08 — Deployment packaging | P2 | Optional online deployment with permitted small derived data only; ensure paths and dependency compatibility |
+| ISS-09 — Replay sensitivity analysis | P2 | Compare threshold and consecutive-confirmation settings on validation/historical examples; preserve baseline policy and do not claim industrial optimization |
 
-**Important:** These are explicit **initial engineering choices**, not parameters asserted to be specified by the three literature sources or optimal for XJTU-SY. If the final approved proposal mandates a different feature representation, change the configuration and corresponding tests together under version control.
+## 10. Change control, ownership and traceability
 
-**Causality detail:** DWT is computed **within a completed measurement snapshot**, not across the full future bearing history. A prediction at snapshot `i` may use feature vectors only from snapshots `max(0, i-19)` through `i`; the initial version requires 20 complete snapshots and therefore starts at `i=19`.
+- **Owner:** Team 3. Each change should name an implementer and reviewer in the issue/PR.
+- Each test should retain its ID in the test function name, parameter ID, docstring or test mapping.
+- Changes to the RUL definition, DWT configuration, split IDs, feature order, scaler policy, sequence length, replay policy or metric aggregation require corresponding updates to tests, configs and documentation in the **same PR**.
+- Keep raw dataset and large generated outputs out of Git unless license and repository policy explicitly permit them. For a dashboard release, commit only an approved minimal derived-results bundle or use documented artifact storage.
+- Preserve baseline outputs; optimization must use a distinct run name and record differences.
+- Add a regression test for every fixed P0/P1 defect. Never weaken assertions merely to turn failures green.
+- Maintain a separate `docs/TEST_EXECUTION_REPORT.md` (or equivalent) containing actual dated executions; do not overwrite this plan with transient status notes.
+- Before final presentation, reconcile the project proposal, README, code and slides so they consistently describe **LSTM vs GRU**, **RUL regression in minutes**, and **offline historical replay**.
 
-**RUL label detail:** `rul_remaining_recordings = N - 1 - i` is an auxiliary integer count; `rul_minutes = rul_remaining_recordings × 1` is the primary regression target. The equality of numerical values is specific to the XJTU-SY one-minute sampling protocol. These supervised labels use the known future endpoint **offline**; neither endpoint nor label may be supplied as an inference feature. For `Bearing1_1` (123 files), targets run from 122 minutes at `1.csv` to 0 minutes at `123.csv`.
+## 11. Final reviewer checklist
 
-## 4. Test Cases and Acceptance Criteria
+- [ ] Exact commit SHA and Python environment recorded.
+- [ ] Data integrity scan log archived; dataset provenance documented.
+- [ ] All P0 tests executed and passing, or release blocked.
+- [ ] Leakage checks cover split, normalization, window boundaries and future features.
+- [ ] Evaluation metrics independently recomputed from saved predictions.
+- [ ] Pooled and per-bearing results include window counts and units.
+- [ ] Replay policy and classifications checked against detailed event CSVs.
+- [ ] Dashboard started locally and every page inspected with actual artifacts.
+- [ ] Dashboard fails safely when outputs are missing or malformed.
+- [ ] Baseline run preserved separately from optimization experiments.
+- [ ] Limitations and outstanding issues included in final report.
+- [ ] No live-industrial, defect-probability, maintenance-savings or generalization claim unsupported by evidence.
 
-| ID | Area / proposed file | Test case | Expected result / acceptance criterion | Priority |
-|---|---|---|---|---|
-| D-01 | Loading / `test_loader.py` | Load a valid small vibration fixture | Expected channels, rows and numeric values are preserved | P0 |
-| D-02 | Loading | Missing file, empty file or malformed schema | Explicit, informative error; no silent fallback | P0 |
-| D-03 | Loading | Read successive measurements | Chronological ordering and bearing identity are preserved | P0 |
-| F-01 | Features / `test_features.py` | Known synthetic signal through `db4` level-3 DWT energy function | Deterministic finite values, four energies per channel and reference values computed independently | P0 |
-| F-02 | Features | Empty, nonnumeric or invalid signal | Explicit validation error | P1 |
-| F-03 | Features | Change samples after prediction time *t* | Feature vector for time *t* remains unchanged | P0 |
-| T-01 | Targets / `test_targets.py` | Five ordered snapshots with one-minute spacing | `rul_minutes` equals `[4, 3, 2, 1, 0]` minutes and `rul_remaining_recordings` equals `[4, 3, 2, 1, 0]` | P0 |
-| T-02 | Targets | Missing bearing ID, invalid/duplicate/nonconsecutive steps, empty data | Explicit validation error; no fabricated labels | P0 |
-| T-03 | Targets | Label alignment and bearing independence | Each sequence predicts minute-RUL of its last observed step; labels are computed independently for each bearing | P0 |
-| S-01 | Splits / `test_splits.py` | Partition bearing IDs | Train, validation and test ID sets are pairwise disjoint | P0 |
-| S-02 | Splits | Fixed seed and fixed bearing list | Repeated splitting yields the same assignments | P0 |
-| S-03 | Splits | Check completeness and configured proportions | Each intended bearing assigned once; expected 9/3/3 counts (3/1/1 per condition) | P0 |
-| Q-01 | Sequences / `test_sequences.py` | Construct 20-step temporal windows with stride 1 | For `N >= 20`, exactly `N-19` windows, each shaped `(20, feature_count)`, with endpoint-aligned labels | P0 |
-| Q-02 | Sequences | First available prediction and short histories | Boundary behavior matches the documented policy | P1 |
-| Q-03 | Sequences | Mutate future observations | Earlier windows and their inputs do not change | P0 |
-| N-01 | Scaling / `test_scaling.py` | Extreme values only in test data | StandardScaler means/variances equal training-only fit and remain unchanged | P0 |
-| M-01 | Metrics / `test_metrics.py` | `y_true=[100,80,60]`, `y_pred=[90,70,50]` in minutes | MAE = 10 minutes and RMSE = 10 minutes | P0 |
-| M-02 | Metrics | Perfect predictions | MAE = 0 and RMSE = 0 | P0 |
-| M-03 | Metrics | Shape mismatch, empty arrays or NaN/Inf | Explicit error according to the documented metric API | P0 |
-| A-01 | Models / `test_models.py` | LSTM and GRU forward pass on tiny tensors | One finite RUL prediction per input sequence; correct shape | P0 |
-| A-02 | Models | One minimal training step | Loss is finite; gradients/weights update where expected | P1 |
-| A-03 | Models | Compare shared input and output contracts | Both models accept equivalent features and return comparable RUL units | P0 |
-| I-01 | Pipeline / `test_pipeline.py` | Tiny synthetic end-to-end fixture | Loading → features → targets → split → sequences → inference → metrics completes | P1 |
-| R-01 | Reproducibility | Repeat a controlled experiment | Same splits/configuration; deterministic components reproduce results within stated tolerance | P1 |
-| H-01 | Historical replay | Simulate decision at past time *t* | Only information available at *t* affects that decision | P1 |
+---
 
-**Priority:** P0 = required correctness gate; P1 = important additional coverage. This table specifies required behavior; execution outcomes belong in separate test reports.
-
-## 5. Test Data and Fixtures
-
-- **Unit tests:** tiny synthetic arrays, short signals and fabricated bearing IDs; no full dataset download required.
-- **Integration tests:** small, clearly identified subsets of actual XJTU-SY files after access and format validation.
-- **Evaluation:** held-out complete bearing runs, never random rows/windows from the same bearing across partitions.
-- **Fixture policy:** commit only small synthetic fixtures unless the dataset license explicitly permits redistribution. Do not commit large raw vibration data.
-
-## 6. Model Evaluation Procedure
-
-1. Verify data schema and chronological order.
-2. Freeze bearing-level train/validation/test IDs and record operating conditions.
-3. Use the documented 1-minute measurement cadence and the experimental run-to-failure endpoint; calculate minute-RUL as `(N - 1 - i) × 1 minute`.
-4. Extract causal wavelet-based features using the same settings for both models.
-5. Fit any learned preprocessing on training bearings only.
-6. Construct aligned past-only sequences and targets.
-7. Train LSTM and GRU with documented configurations and seeds.
-8. Select hyperparameters using validation bearings only.
-9. Evaluate both models on the same untouched test bearings.
-10. Report MAE and RMSE **in minutes**, both pooled and per-bearing, with aggregation/weighting, configurations and limitations.
-11. Optionally replay historical maintenance decisions as a **simulation**, not verified industrial cost savings.
-
-### Required result record (once experiments exist)
-
-| Field | Description |
-|---|---|
-| Model | LSTM or GRU |
-| Dataset and bearings | Dataset version and exact train/val/test IDs |
-| RUL unit | Minutes to the final recorded snapshot: `(N - 1 - i) × 1 minute` |
-| Features | Wavelet type/level/statistics and channel selection |
-| Sequence length | Number of past observations used |
-| Training settings | Seed, epochs, batch size, optimizer, learning rate |
-| MAE / RMSE | Held-out test values in minutes |
-| Per-bearing scores | Metrics for each held-out bearing |
-| Runtime / hardware | Environment for reproducibility |
-| Notes | Failures, limitations, and deviations from plan |
-
-No performance targets are asserted before a baseline experiment. Acceptance for the scientific comparison requires a leakage-free, reproducible protocol and correctly computed metrics, **not** a predetermined accuracy claim.
-
-### Dataset provenance and verification evidence
-
-The project uses the supplied *Introduction to XJTU-SY Bearing Dataset* (sections 1–3) as its primary sampling and failure-protocol source. It states 15 complete run-to-failure bearings, three operating conditions (35 Hz/12 kN, 37.5 Hz/11 kN, 40 Hz/10 kN), 25.6 kHz acquisition, 32,768 samples per 1.28-second recording, one recording per minute, and a vibration-amplitude stopping criterion of `10 × Ah`. It also tabulates bearing lifetimes and CSV counts. The project's local VS Code evidence (28 October 2026) reports 9/9 synthetic loader tests passing and structural validation of 9,216 CSVs from 15 bearings with zero reported errors. This does **not** constitute independent verification of sensor calibration, physically plausible signal behavior, or an external benchmark result.
-
-## 7. Test Execution and Evidence
-
-Use `pytest` for automated tests once test modules exist:
-
-```bash
-python -m pytest tests/ -v
-```
-
-Record execution date, commit hash, environment, passed/failed/skipped counts, and any failure explanation. A missing production module during test-first development is an expected initial **RED** state; it is not evidence that the implemented system failed validation.
-
-A test can be marked **PASS** only after execution confirms the documented assertion. Mark unimplemented tests **NOT RUN**, not PASS.
-
-## 8. Quality Gates
-
-**Gate 1 — Test design:** contracts, target definition, data split policy, and P0 assertions agreed.
-
-**Gate 2 — Core implementation:** all applicable P0 unit tests pass; failures and exclusions documented.
-
-**Gate 3 — Integration:** small end-to-end pipeline works with correctly aligned sequences and labels.
-
-**Gate 4 — Model comparison:** LSTM and GRU are evaluated on identical held-out bearings with recorded MAE/RMSE and experiment settings.
-
-**Gate 5 — Final reporting:** results are reproducible to the extent supported by the environment, limitations are disclosed, and any historical replay is labeled as simulation.
-
-## 9. Test Maintenance and Change Control
-
-This document is the standing reference for tests across the project lifecycle. Any change to RUL units, wavelet decomposition, sequence construction, split policy, preprocessing, model interfaces or evaluation metrics must be reflected in the relevant configuration, test assertions and documentation in the same change set.
-
-- Keep test fixtures small, deterministic and independent of the full dataset wherever possible.
-- Add regression tests for each corrected defect.
-- Review causal leakage and bearing-level independence whenever preprocessing or windowing changes.
-- Keep baseline parameters configurable; do not hard-code them as universal scientific requirements.
-- Store test execution results (commit, environment, outcomes and failures) separately from this plan.
-- Do not silently relax acceptance criteria to make a failing implementation pass; document and justify any specification change.
-
-## 10. Traceability and Ownership
-
-Each implemented test should retain its test-case ID in its name, documentation or test metadata. Map the test case to the relevant source module and requirement. Code reviewers should verify that new functionality has appropriate test coverage and that any changes preserve the agreed LSTM-versus-GRU comparison protocol.
-
-**Document maintenance rule:** Update this plan when the system contract changes, not merely when a task is completed. Operational status, deadlines and next-action checklists belong in project tracking documents rather than this test plan.
+**Revision note (v3.0):** Consolidates the duplicated v2.2 source, updates outdated “models planned / results planned” language, adds verified-vs-planned evidence discipline, documents reported baseline results and replay, extends tests to dashboard, integration, release and error paths, and introduces traceable proposed GitHub issues. No new tests were executed while authoring this revision.
