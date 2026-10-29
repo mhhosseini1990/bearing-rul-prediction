@@ -39,3 +39,5 @@ Thumbs.db
 !.env.example
 
 .github/workflows/ci.yml
+
+/outputs/

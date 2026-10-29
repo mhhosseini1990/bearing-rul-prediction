@@ -134,7 +134,7 @@ def prepare_data(sequence_length, batch_size):
     partitions, feature_scaler = prepare_dataset(
     feature_matrix_path=FEATURE_FILE,
     split_config_path=SPLIT_CONFIG,
-)
+    )
 
     required = {"train", "validation", "test"}
 
