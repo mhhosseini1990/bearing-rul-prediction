@@ -1,6 +1,18 @@
-streamlit
-pandas
-numpy
+# Data processing and machine learning
+numpy>=1.24,<3
+pandas>=2.0,<3
+scikit-learn>=1.3,<2
+joblib>=1.3,<2
+PyWavelets
+PyYAML
+
+# Deep learning models
+torch>=2.2
+
+# Visualization and dashboard
+matplotlib
 plotly
-# venv\Scripts\Activate.ps1
-# streamlit run app.py
+streamlit
+
+# Testing
+pytest
