@@ -38,6 +38,7 @@ Thumbs.db
 .env.*
 !.env.example
 
-.github/workflows/ci.yml
+# GitHub Actions workflow must be tracked
+# .github/workflows/ci.yml
 
 /outputs/
