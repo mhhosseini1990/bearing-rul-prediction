@@ -8,6 +8,7 @@ import platform
 import subprocess
 import sys
 from datetime import datetime, timezone
+from importlib.metadata import PackageNotFoundError, version
 from pathlib import Path
 
 import numpy as np
@@ -16,184 +17,243 @@ import torch
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 OUTPUTS_DIR = PROJECT_ROOT / "outputs"
-SPLIT_CONFIG_PATH = PROJECT_ROOT / "configs/bearing_split_v1.yaml"
+FEATURE_FILE = PROJECT_ROOT / "data/processed/xjtu_wavelet_features.csv"
+SPLIT_FILE = PROJECT_ROOT / "configs/bearing_split_v1.yaml"
 
 
-def compute_sha256(file_path: Path) -> str:
-    """Compute the SHA-256 checksum of a file."""
-    sha256 = hashlib.sha256()
-    with open(file_path, "rb") as f:
-        for chunk in iter(lambda: f.read(65536), b""):
-            sha256.update(chunk)
-    return sha256.hexdigest()
+def sha256_file(path: Path) -> str:
+    digest = hashlib.sha256()
+    with path.open("rb") as file:
+        for chunk in iter(lambda: file.read(65536), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
 
 
-def get_git_commit_hash() -> str:
-    """Retrieve current Git HEAD commit hash."""
-    try:
-        result = subprocess.run(
-            ["git", "rev-parse", "HEAD"],
-            cwd=PROJECT_ROOT,
-            capture_output=True,
-            text=True,
-            check=True,
-        )
-        return result.stdout.strip()
-    except Exception:
-        return "git_commit_sha_unavailable"
+def inspect_file(path: Path) -> dict:
+    relative_path = path.relative_to(PROJECT_ROOT).as_posix()
 
+    if not path.is_file():
+        return {
+            "relative_path": relative_path,
+            "status": "missing",
+            "exists": False,
+        }
 
-def get_environment_metadata() -> dict:
-    """Collect Python and core package versions."""
     return {
-        "python_version": sys.version.split()[0],
+        "relative_path": relative_path,
+        "status": "present_checksum_recorded",
+        "exists": True,
+        "size_bytes": path.stat().st_size,
+        "sha256": sha256_file(path),
+    }
+
+
+def git_metadata() -> dict:
+    def run_git(*args: str) -> str | None:
+        try:
+            result = subprocess.run(
+                ["git", *args],
+                cwd=PROJECT_ROOT,
+                capture_output=True,
+                text=True,
+                check=True,
+            )
+            return result.stdout.strip()
+        except (OSError, subprocess.CalledProcessError):
+            return None
+
+    status = run_git("status", "--porcelain")
+
+    return {
+        "commit_sha": run_git("rev-parse", "HEAD"),
+        "working_tree_clean": status == "" if status is not None else None,
+        "working_tree_status": status,
+    }
+
+
+def package_version(name: str) -> str | None:
+    try:
+        return version(name)
+    except PackageNotFoundError:
+        return None
+
+
+def environment_metadata() -> dict:
+    return {
+        "python": sys.version.split()[0],
         "platform": platform.platform(),
         "packages": {
-            "torch": torch.__version__,
-            "pandas": pd.__version__,
-            "numpy": np.__version__,
+            name: package_version(name)
+            for name in [
+                "numpy",
+                "pandas",
+                "torch",
+                "scikit-learn",
+                "PyWavelets",
+                "PyYAML",
+                "joblib",
+            ]
         },
     }
 
 
-def inspect_artifact(file_path: Path) -> dict:
-    """Inspect file existence, size, and checksum hash without embedding raw contents."""
-    if not file_path.exists():
-        return {"exists": False, "status": "missing"}
-
-    size_bytes = file_path.stat().st_size
-    return {
-        "exists": True,
-        "status": "valid",
-        "size_bytes": size_bytes,
-        "size_kb": round(size_bytes / 1024, 2),
-        "sha256": compute_sha256(file_path),
-    }
-
-
-def parse_args() -> argparse.Namespace:
-    parser = argparse.ArgumentParser(
-        description="Create an exhaustive baseline experiment evidence manifest."
-    )
-    parser.add_argument(
-        "--run-name",
-        type=str,
-        default="main",
-        help="Name of the experiment run folder under outputs/",
-    )
-    return parser.parse_args()
-
-
 def main() -> None:
-    args = parse_args()
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--run-name", default="main")
+    args = parser.parse_args()
+
+    if (
+        not args.run_name
+        or args.run_name in {".", ".."}
+        or Path(args.run_name).name != args.run_name
+    ):
+        raise ValueError("Invalid run name")
+
     run_dir = OUTPUTS_DIR / args.run_name
 
-    if not run_dir.exists():
-        raise FileNotFoundError(f"Run directory not found: {run_dir}")
+    if not run_dir.is_dir():
+        raise FileNotFoundError(run_dir)
+
+    output_path = run_dir / "evidence_manifest.json"
+
+    if output_path.exists():
+        raise FileExistsError(
+            f"Manifest already exists: {output_path}"
+        )
 
     training_dir = run_dir / "training"
     checkpoint_dir = run_dir / "checkpoints"
     eval_dir = run_dir / "evaluation"
-    replay_dir = run_dir / "policy_comparison"
+    replay_dir = run_dir / "maintenance_replay"
+    preprocessing_dir = run_dir / "preprocessing"
 
-    # Read training summary
-    summary_file = training_dir / "training_summary.json"
-    training_summary_data = {}
-    if summary_file.exists():
-        try:
-            with open(summary_file, "r", encoding="utf-8") as f:
-                training_summary_data = json.load(f)
-        except Exception as exc:
-            training_summary_data = {"error": f"Failed to parse summary: {str(exc)}"}
-
-    # Tracked artifacts list
     tracked_files = {
-        "checkpoints": {
-            "best_lstm": checkpoint_dir / "best_lstm.pt",
-            "best_gru": checkpoint_dir / "best_gru.pt",
+        "dataset": {
+            "feature_matrix": FEATURE_FILE,
+            "bearing_split": SPLIT_FILE,
         },
-        "training_artifacts": {
-            "training_summary": summary_file,
+        "preprocessing": {
+            "feature_scaler": (
+                preprocessing_dir
+                / "feature_scaler_reconstructed.joblib"
+            ),
+            "feature_scaler_metadata": (
+                preprocessing_dir
+                / "feature_scaler_metadata.json"
+            ),
+        },
+        "training": {
+            "summary": training_dir / "training_summary.json",
             "lstm_history": training_dir / "lstm_history.csv",
             "gru_history": training_dir / "gru_history.csv",
         },
-        "evaluation_artifacts": {
-            "comparison": eval_dir / "comparison.csv",
-            "per_bearing_metrics": eval_dir / "per_bearing_metrics.csv",
-            "lstm_predictions": eval_dir / "lstm_predictions.csv",
-            "gru_predictions": eval_dir / "gru_predictions.csv",
+        "checkpoints": {
+            "lstm": checkpoint_dir / "best_lstm.pt",
+            "gru": checkpoint_dir / "best_gru.pt",
         },
-        "replay_artifacts": {
-            "policy_summary_csv": replay_dir / "policy_comparison_summary.csv",
-            "policy_summary_json": replay_dir / "policy_comparison_summary.json",
+        "evaluation": {
+            "comparison": eval_dir / "comparison.csv",
+            "per_bearing_metrics": (
+                eval_dir / "per_bearing_metrics.csv"
+            ),
+            "lstm_predictions": (
+                eval_dir / "lstm_predictions.csv"
+            ),
+            "gru_predictions": (
+                eval_dir / "gru_predictions.csv"
+            ),
+        },
+        "maintenance_replay": {
+            "config": replay_dir / "replay_config.json",
+            "events": replay_dir / "replay_events.csv",
+            "summary": replay_dir / "replay_summary.csv",
+            "timeline": replay_dir / "replay_timeline.csv",
         },
     }
 
-    file_manifest = {}
-    missing_artifacts = []
-    valid_count = 0
+    artifacts = {}
+    missing = []
 
     for category, files in tracked_files.items():
-        file_manifest[category] = {}
-        for key, path in files.items():
-            info = inspect_artifact(path)
-            rel_path = str(path.relative_to(PROJECT_ROOT)) if path.exists() else str(path.relative_to(PROJECT_ROOT) if PROJECT_ROOT in path.parents else path)
-            info["relative_path"] = rel_path
-            file_manifest[category][key] = info
+        artifacts[category] = {}
 
-            if info["exists"]:
-                valid_count += 1
-            else:
-                missing_artifacts.append(rel_path)
+        for name, path in files.items():
+            info = inspect_file(path)
+            artifacts[category][name] = info
 
-    # Dataset provenance and configuration metadata
-    dataset_provenance = {
-        "dataset_name": "XJTU-SY Rolling Element Bearing Dataset",
-        "split_config_path": str(SPLIT_CONFIG_PATH.relative_to(PROJECT_ROOT)),
-        "seed": training_summary_data.get("seed", 42),
-        "sequence_length": training_summary_data.get("sequence_length", 20),
-        "target_scale_minutes": training_summary_data.get("target_scale_minutes", None),
-    }
+            if not info["exists"]:
+                missing.append(info["relative_path"])
 
-    # Explicit list of unverified claims and non-production disclaimers
-    unverified_claims = [
-        "No real-time factory deployment or industrial hardware integration is verified.",
-        "Hypothetical maintenance costs are illustrative parameters for scenario analysis only.",
-        "Model generalization to unobserved bearing geometries or load conditions is unverified.",
-    ]
+    summary_path = training_dir / "training_summary.json"
+    training_summary = None
+
+    if summary_path.is_file():
+        with summary_path.open(encoding="utf-8") as file:
+            training_summary = json.load(file)
+
+    scaler_metadata_path = (
+        preprocessing_dir / "feature_scaler_metadata.json"
+    )
+    scaler_metadata = None
+
+    if scaler_metadata_path.is_file():
+        with scaler_metadata_path.open(encoding="utf-8") as file:
+            scaler_metadata = json.load(file)
 
     manifest = {
-        "manifest_version": "2.0.0",
-        "generated_at_utc": datetime.now(timezone.utc).isoformat(),
-        "repository_git_sha": get_git_commit_hash(),
-        "environment": get_environment_metadata(),
-        "dataset_provenance_and_config": dataset_provenance,
+        "manifest_version": "3.0.0",
+        "generated_at_utc": datetime.now(
+            timezone.utc
+        ).isoformat(),
         "run_name": args.run_name,
-        "experiment_summary": training_summary_data,
-        "artifact_health": {
-            "total_tracked_files": valid_count + len(missing_artifacts),
-            "valid_files_count": valid_count,
-            "missing_files_count": len(missing_artifacts),
-            "status": "complete" if len(missing_artifacts) == 0 else "partial",
+        "git": git_metadata(),
+        "environment": environment_metadata(),
+        "dataset": {
+            "name": "XJTU-SY",
+            "split_unit": "bearing",
+            "feature_matrix": artifacts["dataset"][
+                "feature_matrix"
+            ],
+            "split_config": artifacts["dataset"][
+                "bearing_split"
+            ],
         },
-        "missing_artifacts": missing_artifacts,
-        "unverified_claims_and_disclaimers": unverified_claims,
-        "artifacts": file_manifest,
+        "training_summary": training_summary,
+        "feature_scaler_metadata": scaler_metadata,
+        "artifact_health": {
+            "total": sum(
+                len(files) for files in tracked_files.values()
+            ),
+            "missing_count": len(missing),
+            "status": (
+                "complete_file_inventory"
+                if not missing
+                else "incomplete_file_inventory"
+            ),
+        },
+        "missing_artifacts": missing,
+        "artifacts": artifacts,
+        "limitations": [
+            "Reconstructed feature scaler is not historically verified.",
+            "Checksums establish current file identity, not historical equivalence.",
+            "File presence does not prove scientific correctness.",
+            "Industrial deployment and cost savings are not validated.",
+        ],
     }
 
-    output_path = run_dir / "evidence_manifest.json"
-    with open(output_path, "w", encoding="utf-8") as f:
-        json.dump(manifest, f, indent=2)
+    # Exclusive creation prevents accidental overwrite.
+    with output_path.open("x", encoding="utf-8") as file:
+        json.dump(manifest, file, indent=2)
 
-    print("=" * 70)
-    print("COMPLETE BASELINE EXPERIMENT EVIDENCE MANIFEST CREATED")
-    print("=" * 70)
-    print(f"Git SHA:             {manifest['repository_git_sha']}")
-    print(f"Python Version:      {manifest['environment']['python_version']}")
-    print(f"Manifest Path:       {output_path}")
-    print(f"Artifact Health:     {valid_count} valid files, {len(missing_artifacts)} missing")
-    print(f"Missing Artifacts:   {missing_artifacts}")
-    print("=" * 70)
+    print("Evidence manifest created:", output_path)
+    print("Tracked files:", manifest["artifact_health"]["total"])
+    print("Missing files:", len(missing))
+    print("Inventory status:", manifest["artifact_health"]["status"])
+
+    if missing:
+        print("Missing artifacts:")
+        for path in missing:
+            print(" -", path)
 
 
 if __name__ == "__main__":
