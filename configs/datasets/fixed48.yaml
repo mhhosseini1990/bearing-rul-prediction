@@ -1,0 +1,11 @@
+dataset: XJTU-SY
+raw: data/raw/XJTU-SY_Bearing_Datasets
+processed: data/processed/xjtu_fixed_features_48.csv
+manifest: data/processed/xjtu_fixed_features_48.manifest.json
+feature_set: fixed48_v1
+feature_count: 48
+rows: 9216
+bearings: 15
+conditions: 3
+feature_registry_sha256: 18692d899aafd55be58a5a01fd66892c2b7f8cb8e1bdad75d2f09a34deaf2b0f
+csv_sha256: d72fb0c3d05badf455ccf9cc0aceac5a898d7d30b7c13e424feacc669420451d

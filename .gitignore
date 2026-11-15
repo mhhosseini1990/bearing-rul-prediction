@@ -24,12 +24,15 @@ Thumbs.db
 /data/processed/**
 !/data/processed/.gitkeep
 
-# Generated model artifacts and results
-/outputs/figures/**
+# Generated model artifacts and results. Release evidence stays local unless
+# deliberately packaged with checksums.
+/outputs/**
+!/outputs/README.md
+!/outputs/figures/
 !/outputs/figures/.gitkeep
-/outputs/metrics/**
+!/outputs/metrics/
 !/outputs/metrics/.gitkeep
-/outputs/models/**
+!/outputs/models/
 !/outputs/models/.gitkeep
 
 # Logs and local settings
@@ -38,7 +41,4 @@ Thumbs.db
 .env.*
 !.env.example
 
-# GitHub Actions workflow must be tracked
-# .github/workflows/ci.yml
-
-/outputs/
+# GitHub Actions workflow remains tracked.

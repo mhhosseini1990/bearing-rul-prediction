@@ -223,3 +223,14 @@ def test_a10_lstm_and_gru_have_different_parameter_counts():
 
     print(f"\nLSTM parameters: {lstm_parameters}")
     print(f"GRU parameters: {gru_parameters}")
+
+
+@pytest.mark.parametrize("model_class", [LSTMRegressor, GRURegressor])
+def test_a11_softplus_output_is_nonnegative_and_backward_pass_works(model_class):
+    model = model_class(input_size=48, hidden_size=32, num_layers=1,
+                        output_activation="softplus")
+    output = model(torch.randn(4, 10, 48))
+    assert output.shape == (4, 1)
+    assert torch.all(output >= 0)
+    output.mean().backward()
+    assert all(parameter.grad is not None for parameter in model.parameters())

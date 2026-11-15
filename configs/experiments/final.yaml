@@ -1,0 +1,10 @@
+protocol: fixed48_v1_direct_rul_final
+folds: 5
+split_per_fold: {train: 9, validation: 3, test: 3}
+models: [lstm, gru]
+seeds: [42, 123, 2026]
+sequence_length_by_fold: {fold_1: 10, fold_2: 30, fold_3: 30, fold_4: 10, fold_5: 10}
+common_test_min_step: 29
+checkpoint_count: 30
+selection: validation_bearing_macro_mae_only
+test_status: exploratory_due_to_prior_outer_test_inspection

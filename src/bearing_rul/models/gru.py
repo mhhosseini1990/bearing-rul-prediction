@@ -1,17 +1,19 @@
-"""GRU regression model for rolling-bearing RUL prediction."""
+"""GRU regression model for rolling-bearing RUL prediction with fixed features."""
 
 import torch
 from torch import nn
+from torch.nn import functional as F
 
 
 class GRURegressor(nn.Module):
-    """Predict RUL from a sequence of wavelet features."""
+    """Predict one RUL value from a sequence of 48 fixed vibration features."""
 
     def __init__(
         self,
-        input_size: int = 8,
+        input_size: int = 48,
         hidden_size: int = 64,
         num_layers: int = 1,
+        output_activation: str = "softplus",
     ):
         super().__init__()
 
@@ -24,6 +26,9 @@ class GRURegressor(nn.Module):
         if num_layers < 1:
             raise ValueError("num_layers must be positive")
 
+        if output_activation not in {"linear", "softplus"}:
+            raise ValueError("output_activation must be linear or softplus")
+        self.output_activation = output_activation
         self.input_size = input_size
 
         self.gru = nn.GRU(
@@ -39,7 +44,10 @@ class GRURegressor(nn.Module):
         )
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
-        """Return one RUL prediction per input sequence."""
+        """Return one RUL prediction per input sequence.
+
+        Expected input shape: (batch, sequence_length, input_size).
+        """
 
         if x.ndim != 3:
             raise ValueError(
@@ -59,9 +67,6 @@ class GRURegressor(nn.Module):
             raise ValueError("Input contains NaN or infinity")
 
         sequence_output, _ = self.gru(x)
-
         last_hidden_state = sequence_output[:, -1, :]
-
         prediction = self.output_layer(last_hidden_state)
-
-        return prediction
+        return F.softplus(prediction) if self.output_activation == "softplus" else prediction

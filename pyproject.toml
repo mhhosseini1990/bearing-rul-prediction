@@ -8,14 +8,11 @@ name = "bearing-rul"
 version = "0.1.0"
 description = "Educational predictive maintenance project for rolling bearing RUL"
 readme = "README.md"
-requires-python = ">=3.10"
+requires-python = ">=3.10,<3.16"
 dependencies = [
     "numpy>=1.24,<3",
     "pandas>=2.0,<3",
-    "scikit-learn>=1.3,<2",
-    "joblib>=1.3,<2",
     "PyWavelets>=1.5",
-    "PyYAML>=6.0",
 ]
 
 [project.optional-dependencies]
@@ -24,7 +21,6 @@ training = [
 ]
 
 dashboard = [
-    "matplotlib>=3.7",
     "plotly>=5.18",
     "streamlit>=1.35",
 ]
@@ -36,7 +32,6 @@ dev = [
 
 all = [
     "torch>=2.2",
-    "matplotlib>=3.7",
     "plotly>=5.18",
     "streamlit>=1.35",
     "pytest>=8,<10",
